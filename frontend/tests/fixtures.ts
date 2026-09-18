@@ -26,6 +26,8 @@ export const HEALTH: Health = {
   yt_dlp_version: "2026.08.19",
   ffmpeg: { available: true, version: "7.1" },
   js_runtime: { name: "deno", available: true },
+  pot_provider: { url: "http://127.0.0.1:4416", available: true, version: "2.0.0" },
+  player_clients: ["mweb", "visionos"],
   streams: { active: 0, max: 2 },
   rss_mb: 120,
 };

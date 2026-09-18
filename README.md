@@ -98,6 +98,8 @@ uv sync                                  # creates .venv, installs fastapi, yt-d
 export ALLOWED_ORIGINS=http://localhost:5173
 export FRONTEND_ORIGIN=http://localhost:5173
 export JS_RUNTIME=node                   # use "deno" if you have Deno installed; omit to default to deno
+export POT_PROVIDER_URL=                 # no PO-token server locally (only the Docker image bundles one)
+export YTDLP_PLAYER_CLIENTS=             # residential IP: yt-dlp's default clients are fine
 uv run uvicorn ytclip.main:app --reload --port 8000
 ```
 
@@ -130,10 +132,10 @@ docker build -t ytclip backend
 docker run --rm -p 8000:10000 \
   -e ALLOWED_ORIGINS=http://localhost:5173 -e FRONTEND_ORIGIN=http://localhost:5173 \
   ytclip
-curl -s localhost:8000/api/health | jq          # js_runtime.name should be "deno", available true
+curl -s localhost:8000/api/health | jq          # js_runtime.name "deno" and pot_provider.available true
 ```
 
-The container listens on `$PORT` (default `10000`, Render's default), runs as a non-root user, and writes nothing to disk. You can prove the last point: after a download, `docker diff <container>` shows no new files.
+The container listens on `$PORT` (default `10000`, Render's default), runs as a non-root user, and writes no media to disk. You can prove the last point: after a download, `docker diff <container>` lists only Deno's small compilation caches (`/home/app/.cache/deno` from yt-dlp's JS-challenge solver, `/opt/bgutil/.cache/deno` from the token server) — never a media file. `start.sh` runs two processes: the bgutil PO-token server on loopback port 4416 and uvicorn.
 
 ## Tests and quality gates
 
@@ -171,7 +173,8 @@ The repository contains a Blueprint, [render.yaml](render.yaml), describing one 
    ```bash
    API=https://<service-name>.onrender.com
    curl -s $API/api/health | jq
-   # expect: "status":"ok", ffmpeg.available true, js_runtime {"name":"deno","available":true}
+   # expect: "status":"ok", ffmpeg.available true, js_runtime {"name":"deno","available":true},
+   #         pot_provider {"available":true,"version":"2.0.0"}, player_clients ["mweb","visionos"]
    ```
 
 7. **Bot-check go/no-go** (do this before anything else — see [Free-tier realities](#free-tier-realities)):
@@ -181,7 +184,7 @@ The repository contains a Blueprint, [render.yaml](render.yaml), describing one 
         -d '{"url":"https://www.youtube.com/watch?v=jNQXAC9IVRw"}' | jq '{title, duration_s}'
    ```
 
-   If this returns `"code": "bot_check"`, YouTube is challenging Render's IP range. See [Troubleshooting → bot_check](#youtube-says-bot_check).
+   If this returns `"code": "bot_check"`, YouTube is challenging Render's IP range even with PO tokens. See [Troubleshooting → bot_check](#youtube-says-bot_check).
 
 What the Blueprint sets (Dashboard → your service → Environment):
 
@@ -191,6 +194,10 @@ What the Blueprint sets (Dashboard → your service → Environment):
 | `FRONTEND_ORIGIN` | *(you set it)* | Where the API's HTML error pages link "Back to the app" |
 | `MAX_CONCURRENT_STREAMS` | `2` | Concurrent ffmpeg streams; the third request gets `503 busy` and retries |
 | `JS_RUNTIME` | `deno` | JavaScript runtime for yt-dlp (Deno is in the image) |
+| `POT_PROVIDER_URL` | `http://127.0.0.1:4416` | The bundled PO-token server (see [bot_check](#youtube-says-bot_check)); empty disables it |
+| `YTDLP_PLAYER_CLIENTS` | `mweb,visionos` | yt-dlp player clients to try, in order |
+| `YTDLP_FETCH_POT` | `always` | Attach PO tokens to player requests too (what actually clears the bot check) |
+| `LOG_LEVEL` | `INFO` | Set `DEBUG` to get yt-dlp's verbose log in Render's log stream |
 | `PYTHONUNBUFFERED` | `1` | Real-time logs |
 
 Health check path is `/api/health`; auto-deploy on push is enabled.
@@ -249,6 +256,11 @@ Vercel's Hobby plan is for **non-commercial, personal** use.
 | `FRONTEND_ORIGIN` | `http://localhost:5173` | Link target on HTML error pages |
 | `MAX_CONCURRENT_STREAMS` | `2` | Parallel ffmpeg streams before answering `503 busy` (a capacity guard for 512 MB RAM, not a quota) |
 | `JS_RUNTIME` | `deno` | yt-dlp JavaScript runtime: `deno`, `node`, `bun`, `quickjs`, or empty to disable |
+| `POT_PROVIDER_URL` | `http://127.0.0.1:4416` | bgutil PO-token HTTP server. `start.sh` launches the bundled one when this points at loopback; point it at an external server or set empty to disable |
+| `YTDLP_PLAYER_CLIENTS` | `mweb,visionos` | Comma-separated yt-dlp `player_client` list; empty means yt-dlp's defaults |
+| `YTDLP_FETCH_POT` | `always` | yt-dlp `fetch_pot`: `never`, `auto`, or `always` |
+| `YTDLP_EXTRACTOR_ARGS` | *(unset)* | Extra yt-dlp extractor args in CLI syntax, e.g. `youtube:player_skip=configs;formats=missing_pot` (merged over the two above) |
+| `LOG_LEVEL` | `INFO` | App log level; `DEBUG` also enables yt-dlp's verbose output |
 | `YTDLP_COOKIES_FILE` | *(unset)* | Path to a Netscape cookies file for yt-dlp (see bot_check below) |
 | `YTDLP_PROXY` | *(unset)* | Proxy URL for yt-dlp and extraction, e.g. `socks5://user:pass@host:1080` |
 | `CACHE_TTL_S` | `600` | Seconds to keep a video's metadata in memory so Download right after Load needs no second extraction |
@@ -268,19 +280,28 @@ These are properties of the hosting, not bugs:
 - **Cold start (~1 minute).** A Render Free service sleeps after 15 minutes without traffic and takes about a minute to wake. The page shows a banner and disables Download until `/api/health` answers.
 - **5 GB/month outbound bandwidth** on Render's Hobby workspace. Every downloaded clip counts. Roughly: 350–500 thirty-second 1080p clips, or a handful of long/4K clips. If you exceed it without a card on file, Render suspends the service until next month; with a card it bills $0.15/GB. The UI shows an estimated size for every clip and warns above 500 MB. The app itself imposes **no** limit.
 - **Very large clips** can also trigger Render's "uncommonly high volume of traffic" suspension. Prefer lower resolutions for multi-hour clips.
-- **0.1 CPU / 512 MB RAM.** Video is never re-encoded, so MP4/WebM/M4A/Opus are cheap. MP3 and OGG *are* transcoded (audio only) and are slower for long clips.
+- **0.1 CPU / 512 MB RAM.** Video is never re-encoded, so MP4/WebM/M4A/Opus are cheap. MP3 and OGG *are* transcoded (audio only) and are slower for long clips. The API process plus the bundled PO-token server idle at roughly 220 MB.
 - **Nothing persists** — by design. Downloads run only while your browser is connected; if you close the tab the download stops. Click Download again to re-cut.
-- **YouTube may challenge cloud IPs** ("Sign in to confirm you're not a bot"). See below.
+- **YouTube challenges cloud IPs** ("Sign in to confirm you're not a bot"). The image ships a PO-token provider that satisfies this attestation in most cases — see below.
 
 ## Troubleshooting
 
 ### YouTube says `bot_check`
-Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to prove it is human — common for datacenter ranges. Options, in order:
+Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to prove it is human ("Sign in to confirm you're not a bot") — routine for datacenter ranges such as Render's.
 
-1. **Update yt-dlp** (see above); its EJS/PO-token support resolves many challenges.
-2. **Cookies (at your own risk)**: export cookies from a browser logged into a throwaway YouTube account (see yt-dlp's wiki on cookies), upload the file as a Render **Secret File** (Environment → Secret Files), and set `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`. YouTube may act against the account.
-3. **Proxy**: set `YTDLP_PROXY` to a residential proxy (paid).
-4. **Different host**: the container is portable — anything with a residential IP works.
+**What the image already does.** YouTube accepts requests from such IPs when they carry a *PO token* (Proof of Origin, produced by Google's BotGuard). The Docker image bundles [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider): `start.sh` launches its Deno server on loopback (`POT_PROVIDER_URL`), the matching yt-dlp plugin fetches tokens from it, and `YTDLP_FETCH_POT=always` attaches them to the player request as well as to media URLs. Tokens live only in the server's memory. yt-dlp is pointed at the `mweb` client (the one the plugin can attest) with `visionos` as a fallback (`YTDLP_PLAYER_CLIENTS`).
+
+**If it still happens:**
+
+1. Check `/api/health`: `pot_provider.available` must be `true` and `player_clients` should contain `mweb`. If the provider is down the whole health status is `degraded`; read the Render logs for the `[bgutil]` startup lines.
+2. Read the response's `details.diagnostics` — yt-dlp's per-client warnings (e.g. "mweb client https formats require a GVS PO Token"). Set `LOG_LEVEL=DEBUG` on Render (Environment → save; no rebuild) to get yt-dlp's full verbose log, including `Retrieved a player PO Token for mweb client`.
+3. **Update yt-dlp and the provider** (see above); YouTube changes constantly and both projects follow it. Bump `BGUTIL_VERSION`/`DENO_VERSION` in `backend/Dockerfile` together with `bgutil-ytdlp-pot-provider` in `backend/pyproject.toml` — the plugin and server versions must match.
+4. **Try other clients** via `YTDLP_PLAYER_CLIENTS` (no rebuild needed), e.g. `web_embedded,mweb,visionos`, or `tv_downgraded,mweb`. `web` is SABR-only and `tv` is DRM'd without cookies as of yt-dlp 2026.08; `android`/`ios` clients cannot be attested by the bundled provider.
+5. **Cookies (at your own risk)**: export cookies from a browser logged into a throwaway YouTube account (see yt-dlp's wiki on cookies), upload the file as a Render **Secret File** (Environment → Secret Files), and set `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`. YouTube may act against the account.
+6. **Proxy**: set `YTDLP_PROXY` to a residential proxy (paid). The PO-token server keeps working alongside it.
+7. **Different host**: the container is portable — anything with a residential IP works, with or without the provider.
+
+To run without the provider (e.g. on a residential IP), set `POT_PROVIDER_URL` empty and `YTDLP_PLAYER_CLIENTS` empty; yt-dlp then uses its default clients.
 
 ### `extraction_failed`
 yt-dlp could not read the video; the message contains yt-dlp's own text. Usually fixed by updating yt-dlp.
@@ -290,6 +311,9 @@ The API answers browser navigations with a small HTML page explaining the error 
 
 ### `js_runtime.available: false` in `/api/health`
 Locally: install Deno or set `JS_RUNTIME=node`. In Docker this should never happen — check the image built from `backend/Dockerfile`.
+
+### `pot_provider.available: false` in `/api/health`
+In Docker the bundled server should be up a second or two after start; check the logs for `[bgutil]` lines (a crash usually means a Deno/bgutil version mismatch — the Dockerfile pins both). Locally the provider is not running unless you start one yourself, so either run the [bgutil server](https://github.com/Brainicism/bgutil-ytdlp-pot-provider#a-po-token-server) or set `POT_PROVIDER_URL=` (empty) to silence the degraded status.
 
 ### Clip is a few seconds longer than requested
 Expected. Cutting without re-encoding must start at a keyframe (typically ≤ 5 s before your start) and one extra second is read at the end.

@@ -232,7 +232,7 @@ components:
         details:
           type: object
           additionalProperties: true
-          description: "Optional machine-readable context, e.g. field name and allowed maximum for `invalid_range`."
+          description: "Optional machine-readable context, e.g. field name and allowed maximum for `invalid_range`; for `bot_check`/`extraction_failed`, `diagnostics` lists yt-dlp's per-client warnings for the operator."
 
     VideoVariant:
       type: object
@@ -285,7 +285,7 @@ components:
 
     Health:
       type: object
-      required: [status, yt_dlp_version, ffmpeg, js_runtime, streams]
+      required: [status, yt_dlp_version, ffmpeg, js_runtime, pot_provider, player_clients, streams]
       properties:
         status: { type: string, enum: [ok, degraded] }
         yt_dlp_version: { type: string }
@@ -299,6 +299,17 @@ components:
           properties:
             name: { type: [string, "null"], description: "deno | node | bun | quickjs | null" }
             available: { type: boolean }
+        pot_provider:
+          type: object
+          description: "The bgutil PO-token server yt-dlp uses to attest requests from datacenter IPs (research R11). `url` is null when disabled."
+          properties:
+            url: { type: [string, "null"] }
+            available: { type: boolean }
+            version: { type: [string, "null"] }
+        player_clients:
+          type: array
+          items: { type: string }
+          description: "yt-dlp player clients in use (`YTDLP_PLAYER_CLIENTS`)."
         streams:
           type: object
           properties:

@@ -21,5 +21,16 @@ services:
         value: "2"
       - key: JS_RUNTIME
         value: deno
+      # Bundled bgutil PO-token server (started by start.sh); set empty to disable.
+      - key: POT_PROVIDER_URL
+        value: http://127.0.0.1:4416
+      # yt-dlp clients: mweb works from datacenter IPs when given PO tokens; visionos is a cheap extra.
+      - key: YTDLP_PLAYER_CLIENTS
+        value: mweb,visionos
+      # "always" also attaches a player PO token, which is what clears YouTube's bot check.
+      - key: YTDLP_FETCH_POT
+        value: always
+      - key: LOG_LEVEL
+        value: INFO
       - key: PYTHONUNBUFFERED
         value: "1"

@@ -1,4 +1,12 @@
+import dataclasses
+import socket
+
 import httpx
+from fastapi import FastAPI
+
+from ytclip.config import Settings
+from ytclip.main import create_app
+from ytclip.media.fakes import FakeExtractor
 
 
 async def test_health_reports_dependencies_and_idle_streams(client: httpx.AsyncClient) -> None:
@@ -12,6 +20,29 @@ async def test_health_reports_dependencies_and_idle_streams(client: httpx.AsyncC
     assert body["ffmpeg"]["available"] is True
     assert body["streams"] == {"active": 0, "max": 2}
     assert body["js_runtime"] == {"name": None, "available": False}
+    # Tests run without the bgutil server: reported, never fatal.
+    assert body["pot_provider"] == {"url": None, "available": False, "version": None}
+    assert body["player_clients"] == ["mweb", "visionos"]
+
+
+async def test_unreachable_configured_pot_provider_degrades_health(
+    settings: Settings, extractor: FakeExtractor
+) -> None:
+    with socket.socket() as probe:  # a loopback port nothing listens on
+        probe.bind(("127.0.0.1", 0))
+        url = f"http://127.0.0.1:{probe.getsockname()[1]}"
+    app: FastAPI = create_app(
+        settings=dataclasses.replace(settings, pot_provider_url=url),
+        extractor=extractor,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/health")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] == "degraded"
+    assert body["pot_provider"] == {"url": url, "available": False, "version": None}
 
 
 async def test_cors_preflight_allows_configured_origin(client: httpx.AsyncClient) -> None:

@@ -74,9 +74,15 @@ def render_html(error: ApiError, frontend_origin: str) -> str:
 
 def from_extraction_error(exc: ExtractionError) -> ApiError:
     # Only the generic failure surfaces yt-dlp's own text; known cases use our plain-language copy.
+    # Per-client yt-dlp warnings ride along for the operator on the two "server-side" outcomes.
+    details = None
+    if exc.code in (ErrorCode.bot_check, ErrorCode.extraction_failed) and exc.diagnostics:
+        details = {"diagnostics": exc.diagnostics}
     if exc.code is ErrorCode.extraction_failed and exc.message:
-        return ApiError(exc.code, f"The video could not be read from YouTube: {exc.message}")
-    return ApiError(exc.code)
+        return ApiError(
+            exc.code, f"The video could not be read from YouTube: {exc.message}", details=details
+        )
+    return ApiError(exc.code, details=details)
 
 
 def error_response(request: Request, error: ApiError) -> Response:

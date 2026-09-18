@@ -17,6 +17,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 def create_app(settings: Settings | None = None, extractor: Extractor | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+    logging.getLogger("ytclip").setLevel(settings.log_level)
     app = FastAPI(
         title="YouTube Clip Download API",
         version="0.2.0",

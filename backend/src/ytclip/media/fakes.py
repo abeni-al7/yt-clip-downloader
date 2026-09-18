@@ -25,17 +25,21 @@ class FakeExtractor:
         fail_with: str | None = None,
         no_audio: bool = False,
         title: str = "Fake Video: Test / Clip",
+        diagnostics: list[str] | None = None,
     ) -> None:
         self.media = media
         self.fail_with = fail_with
         self.no_audio = no_audio
         self.title = title
+        self.diagnostics = diagnostics or []
         self.calls = 0
 
     async def resolve(self, video_id: str) -> dict[str, Any]:
         self.calls += 1
         if self.fail_with:
-            raise ExtractionError(classify_error(Exception(self.fail_with)), self.fail_with)
+            raise ExtractionError(
+                classify_error(Exception(self.fail_with)), self.fail_with, self.diagnostics
+            )
         m = self.media
         formats: list[dict[str, Any]] = [
             _video("137", m.mp4_1080, "avc1.640028", 1080, 1920, tbr=4000, ext="mp4"),

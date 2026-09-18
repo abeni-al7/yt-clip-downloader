@@ -15,6 +15,10 @@ from ytclip.media.extractor import (
     [
         ("ERROR: [youtube] abc: Sign in to confirm you’re not a bot.", ErrorCode.bot_check),
         (
+            "All player responses are invalid. Your IP is likely being blocked by Youtube",
+            ErrorCode.bot_check,
+        ),
+        (
             "ERROR: [youtube] abc: Private video. Sign in if you've been granted access",
             ErrorCode.private,
         ),

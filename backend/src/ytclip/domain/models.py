@@ -122,6 +122,12 @@ class RuntimeStatus(BaseModel):
     available: bool
 
 
+class PotProviderStatus(BaseModel):
+    url: str | None
+    available: bool
+    version: str | None = None
+
+
 class StreamStatus(BaseModel):
     active: int
     max: int
@@ -132,5 +138,7 @@ class Health(BaseModel):
     yt_dlp_version: str
     ffmpeg: ToolStatus
     js_runtime: RuntimeStatus
+    pot_provider: PotProviderStatus
+    player_clients: list[str]
     streams: StreamStatus
     rss_mb: int | None = None

@@ -82,7 +82,7 @@ curl -s -o /tmp/s0.mp4 -D - "$API/api/clip?v=<id>&start=60&end=80&format=mp4&hei
 ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/s0.mp4     # 20–30
 ```
 
-Expected: 200s and a playable file. If resolve returns `502 bot_check`, stop and decide: cookies secret file (own risk), residential proxy, or a different host — the rest of the plan is unaffected but this deployment is.
+Expected: 200s and a playable file. If resolve returns `502 bot_check`, first confirm `/api/health` shows `pot_provider.available: true` and `player_clients` containing `mweb` (the image bundles a PO-token provider precisely for this — research R11 outcome), read `details.diagnostics` in the error body, and try other `YTDLP_PLAYER_CLIENTS` values from the Render Environment tab; only then decide between cookies secret file (own risk), residential proxy, or a different host — the rest of the plan is unaffected but this deployment is.
 
 ### S1 — Cut and download a clip (US1, P1)
 

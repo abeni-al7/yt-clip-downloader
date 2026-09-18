@@ -154,8 +154,30 @@ async def test_private_video_is_a_422_with_a_specific_code(
         clip = await c.get("/api/clip", params=clip_params())
 
     assert resolve.status_code == 422 and resolve.json()["code"] == "private"
+    assert "details" not in resolve.json()
     assert clip.status_code == 422 and clip.json()["code"] == "private"
     assert app.state.slots.active == 0
+
+
+async def test_bot_check_carries_per_client_diagnostics_for_the_operator(
+    settings: Settings, synthetic_media: SyntheticMedia
+) -> None:
+    extractor = FakeExtractor(
+        synthetic_media,
+        fail_with="Sign in to confirm you’re not a bot",
+        diagnostics=["mweb client https formats require a GVS PO Token", "pot server unreachable"],
+    )
+    app = create_app(settings, extractor)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        response = await c.post("/api/videos/resolve", json={"url": FAKE_VIDEO_ID})
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["code"] == "bot_check"
+    assert body["details"]["diagnostics"] == [
+        "mweb client https formats require a GVS PO Token",
+        "pot server unreachable",
+    ]
 
 
 async def test_browser_navigations_get_an_html_error_page(client: httpx.AsyncClient) -> None:

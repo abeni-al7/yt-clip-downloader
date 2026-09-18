@@ -4,9 +4,16 @@ import functools
 import shutil
 import subprocess
 
+import httpx
 from fastapi import APIRouter, Request, Response
 
-from ytclip.domain.models import Health, RuntimeStatus, StreamStatus, ToolStatus
+from ytclip.domain.models import (
+    Health,
+    PotProviderStatus,
+    RuntimeStatus,
+    StreamStatus,
+    ToolStatus,
+)
 
 router = APIRouter(prefix="/api", tags=["system"])
 
@@ -39,22 +46,41 @@ def _rss_mb() -> int | None:
     return None
 
 
+async def pot_provider_status(url: str | None) -> PotProviderStatus:
+    """Pings the bgutil PO-token server (research R11); it is optional, so failures are reported."""
+    if not url:
+        return PotProviderStatus(url=None, available=False)
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            response = await client.get(f"{url}/ping")
+            response.raise_for_status()
+            version = response.json().get("version")
+    except (httpx.HTTPError, ValueError):
+        return PotProviderStatus(url=url, available=False)
+    return PotProviderStatus(url=url, available=True, version=str(version) if version else None)
+
+
 @router.get("/health", response_model=Health)
 async def health(request: Request, response: Response) -> Health:
     import yt_dlp.version
 
     state = request.app.state
-    runtime_name = state.settings.js_runtime
+    settings = state.settings
+    runtime_name = settings.js_runtime
     runtime = RuntimeStatus(
         name=runtime_name, available=bool(runtime_name and shutil.which(runtime_name))
     )
     ffmpeg = ffmpeg_status()
+    pot_provider = await pot_provider_status(settings.pot_provider_url)
+    provider_ok = pot_provider.available or settings.pot_provider_url is None
     response.headers["Cache-Control"] = "no-store"
     return Health(
-        status="ok" if ffmpeg.available and runtime.available else "degraded",
+        status="ok" if ffmpeg.available and runtime.available and provider_ok else "degraded",
         yt_dlp_version=yt_dlp.version.__version__,
         ffmpeg=ffmpeg,
         js_runtime=runtime,
+        pot_provider=pot_provider,
+        player_clients=list(settings.ytdlp_player_clients),
         streams=StreamStatus(active=state.slots.active, max=state.slots.max),
         rss_mb=_rss_mb(),
     )

@@ -29,6 +29,8 @@ export interface Health {
   yt_dlp_version: string;
   ffmpeg: { available: boolean; version: string | null };
   js_runtime: { name: string | null; available: boolean };
+  pot_provider: { url: string | null; available: boolean; version: string | null };
+  player_clients: string[];
   streams: { active: number; max: number };
   rss_mb: number | null;
 }

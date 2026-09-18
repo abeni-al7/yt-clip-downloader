@@ -149,6 +149,7 @@ def settings() -> Settings:
         frontend_origin="http://localhost:5173",
         max_concurrent_streams=2,
         js_runtime=None,
+        pot_provider_url=None,
         cache_ttl_s=600,
         cache_max_entries=10,
     )
