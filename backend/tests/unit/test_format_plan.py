@@ -122,3 +122,86 @@ def test_sources_dataclass_is_reused_for_progressive_formats() -> None:
     argv = build_plan(sources, p).argv
     assert argv.count("-i") == 1 and argv[argv.index("-map") + 1] == "0:v:0"
     assert "0:a:0" in argv
+
+
+# --- US2: the remaining formats -------------------------------------------------------------
+
+
+def _codec_args(argv: list[str]) -> list[str]:
+    return argv[argv.index("-c:a") : argv.index("-c:a") + 2]
+
+
+def _after(argv: list[str], flag: str) -> str:
+    return argv[argv.index(flag) + 1]
+
+
+def test_webm_copies_vp9_and_opus() -> None:
+    plan = plan_for(OutputFormat.webm, 1080)
+    assert plan.video_format_id == "248" and plan.audio_format_id == "251"
+    assert _codec_args(plan.argv) == ["-c:a", "copy"]
+    assert _after(plan.argv, "-c:v") == "copy" and _after(plan.argv, "-f") == "webm"
+    assert plan.content_type == "video/webm"
+
+
+def test_webm_refuses_heights_that_only_have_h264() -> None:
+    with pytest.raises(ApiError) as excinfo:
+        plan_for(OutputFormat.webm, 720)
+    assert excinfo.value.code is ErrorCode.unsupported_resolution
+    assert excinfo.value.details == {"field": "height", "available": [2160, 1080]}
+
+
+@pytest.mark.parametrize(
+    ("fmt", "audio_id", "codec", "muxer", "content_type"),
+    [
+        (OutputFormat.m4a, "140", ["-c:a", "copy"], "mp4", "audio/mp4"),
+        (OutputFormat.opus, "251", ["-c:a", "copy"], "opus", "audio/ogg"),
+        (OutputFormat.mp3, "251", ["-c:a", "libmp3lame"], "mp3", "audio/mpeg"),
+        (OutputFormat.ogg, "251", ["-c:a", "libvorbis"], "ogg", "audio/ogg"),
+    ],
+)
+def test_audio_formats_take_a_single_audio_input(
+    fmt: OutputFormat, audio_id: str, codec: list[str], muxer: str, content_type: str
+) -> None:
+    plan = plan_for(fmt)
+    argv = plan.argv
+    assert plan.video_format_id is None and plan.audio_format_id == audio_id
+    assert argv.count("-i") == 1 and "-vn" in argv and "-c:v" not in argv
+    assert _codec_args(argv) == codec
+    assert _after(argv, "-f") == muxer and plan.content_type == content_type
+
+
+def test_m4a_uses_fragmented_mp4_without_per_packet_fragments() -> None:
+    argv = plan_for(OutputFormat.m4a).argv
+    assert "-frag_duration" in argv and "frag_keyframe" not in " ".join(argv)
+
+
+def test_mp3_is_constant_bitrate_without_xing_header() -> None:
+    argv = plan_for(OutputFormat.mp3).argv
+    assert _after(argv, "-b:a") == "192k" and _after(argv, "-write_xing") == "0"
+
+
+def test_ogg_falls_back_to_the_native_vorbis_encoder() -> None:
+    p = params(OutputFormat.ogg)
+    argv = build_plan(select_sources(INFO, p), p, encoders=frozenset({"aac", "libopus"})).argv
+    assert _codec_args(argv) == ["-c:a", "vorbis"] and "experimental" in argv
+
+
+def test_audio_is_transcoded_when_the_container_cannot_carry_it() -> None:
+    only_opus = {"formats": [f for f in INFO["formats"] if f["format_id"] != "140"]}
+    p = params(OutputFormat.mp4, 1080)
+    argv = build_plan(select_sources(only_opus, p), p).argv
+    assert _codec_args(argv) == ["-c:a", "aac"]
+    only_aac = {"formats": [f for f in INFO["formats"] if f["format_id"] != "251"]}
+    p = params(OutputFormat.webm, 1080)
+    argv = build_plan(select_sources(only_aac, p), p).argv
+    assert _codec_args(argv) == ["-c:a", "libopus"]
+
+
+def test_audio_format_with_height_and_missing_audio_are_rejected() -> None:
+    with pytest.raises(ApiError) as excinfo:
+        plan_for(OutputFormat.mp3, 720)
+    assert excinfo.value.code is ErrorCode.unsupported_resolution
+    no_audio = {"formats": [f for f in INFO["formats"] if f["vcodec"] != "none"]}
+    with pytest.raises(ApiError) as missing:
+        select_sources(no_audio, params(OutputFormat.mp3))
+    assert missing.value.code is ErrorCode.no_audio_track

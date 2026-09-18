@@ -4,6 +4,7 @@ import { ApiError, type OutputFormat, type VideoInfo, clipUrl, resolve } from ".
 import { BoundaryNotice } from "../components/BoundaryNotice";
 import { DownloadButton } from "../components/DownloadButton";
 import { DownloadHint } from "../components/DownloadHint";
+import { FormatPicker } from "../components/FormatPicker";
 import { SizeEstimate } from "../components/SizeEstimate";
 import { TimestampField } from "../components/TimestampField";
 import { UrlInput } from "../components/UrlInput";
@@ -116,6 +117,11 @@ export function HomePage({ serverStatus }: Props) {
     update({ endS: Math.max(0, seconds) });
   };
 
+  const onFormatChange = (format: OutputFormat) => {
+    if (!video) return;
+    update({ format, height: defaultHeight(video, format) });
+  };
+
   const rangeError = video && selection.endS - selection.startS < 1 ? copy.end_before_start : null;
   const needsHeight = isVideoFormat(selection.format) && selection.height === null;
 
@@ -177,6 +183,10 @@ export function HomePage({ serverStatus }: Props) {
               />
             </div>
             <BoundaryNotice />
+          </section>
+
+          <section className="card" aria-label="Format and quality">
+            <FormatPicker video={video} value={selection.format} onChange={onFormatChange} />
           </section>
 
           <section className="card" aria-label="Download">
