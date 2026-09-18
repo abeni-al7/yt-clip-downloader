@@ -7,6 +7,7 @@ Paste a YouTube link, choose the part you want, pick a format and quality, and d
 - Six formats: MP4, WebM (video with sound) · MP3, M4A, OGG, Opus (audio only).
 - Original quality — video is never re-encoded. Cuts snap outward to the nearest keyframe, so a clip may include a few extra seconds at the start or end.
 - Designed for a single user on free hosting: backend on **Render Free**, frontend on **Vercel Hobby**.
+- **Also available as a Chrome extension** that needs no server at all — the same clip cutting, done inside your browser from your own IP address, which sidesteps YouTube's bot check on cloud hosts. See [Chrome extension (no server)](#chrome-extension-no-server).
 
 > **Legal**: you are responsible for complying with YouTube's Terms of Service and applicable copyright law. Use it for content you have the right to download.
 
@@ -15,19 +16,20 @@ Paste a YouTube link, choose the part you want, pick a format and quality, and d
 ## Table of contents
 
 1. [How it works](#how-it-works)
-2. [Repository layout](#repository-layout)
-3. [Prerequisites](#prerequisites)
-4. [Run locally](#run-locally)
-5. [Run with Docker](#run-with-docker)
-6. [Tests and quality gates](#tests-and-quality-gates)
-7. [Deploy the backend to Render (free)](#deploy-the-backend-to-render-free)
-8. [Deploy the frontend to Vercel (free)](#deploy-the-frontend-to-vercel-free)
-9. [Connect the two and verify](#connect-the-two-and-verify)
-10. [Configuration reference](#configuration-reference)
-11. [Free-tier realities](#free-tier-realities)
-12. [Troubleshooting](#troubleshooting)
-13. [API](#api)
-14. [Design documents](#design-documents)
+2. [Chrome extension (no server)](#chrome-extension-no-server)
+3. [Repository layout](#repository-layout)
+4. [Prerequisites](#prerequisites)
+5. [Run locally](#run-locally)
+6. [Run with Docker](#run-with-docker)
+7. [Tests and quality gates](#tests-and-quality-gates)
+8. [Deploy the backend to Render (free)](#deploy-the-backend-to-render-free)
+9. [Deploy the frontend to Vercel (free)](#deploy-the-frontend-to-vercel-free)
+10. [Connect the two and verify](#connect-the-two-and-verify)
+11. [Configuration reference](#configuration-reference)
+12. [Free-tier realities](#free-tier-realities)
+13. [Troubleshooting](#troubleshooting)
+14. [API](#api)
+15. [Design documents](#design-documents)
 
 ---
 
@@ -53,6 +55,73 @@ Browser (Vercel, static)                 API (Render, Docker)                   
 - The response headers are sent only after ffmpeg produced its first bytes, so validation and extraction errors still arrive as proper status codes with a plain-language message (JSON for API clients, a small HTML page for browser tabs).
 - If the browser cancels the download, the server kills ffmpeg immediately.
 
+## Chrome extension (no server)
+
+`extension/` is a Manifest V3 extension that does the whole job **inside Chrome**: it talks to YouTube the way an embedded player on a third-party site does, fetches only the byte ranges of the segments your clip needs, and cuts/muxes them with ffmpeg compiled to WebAssembly. Nothing leaves your machine except the requests to YouTube, made from your own (residential) IP — so it is not affected by the bot check that blocks cloud hosts such as Render. No account, no cookies, nothing stored; the file lands in your Downloads folder.
+
+### Install (load unpacked)
+
+1. Fetch the two third-party runtimes the extension ships with — ffmpeg.wasm and yt-dlp's challenge solver (the solver is taken from the backend's locked `yt-dlp-ejs`, so both halves of the project agree on the version):
+
+   ```bash
+   cd extension
+   npm install
+   npm run vendor          # writes extension/vendor/ (~33 MB); needs uv (uses backend/uv.lock)
+   ```
+
+2. In Chrome open `chrome://extensions`, switch on **Developer mode** (top right), click **Load unpacked** and select the `extension/` folder (the one containing `manifest.json`).
+3. Chrome's Safety Check will note that it “can't verify where this extension comes from” — that is what every unpacked extension gets; choose **Keep this extension**.
+4. Pin it: puzzle-piece menu → pin **YouTube Clip Download**.
+
+`npm run zip` produces `extension/dist/yt-clip-extension.zip` if you want to carry the same folder to another machine (unzip, then Load unpacked). The Chrome Web Store is not involved.
+
+### Use
+
+- On any YouTube video page click the extension's toolbar icon: the clip page opens in a new tab with that video loaded (and the `t=` start time if the URL had one). Or click the icon anywhere and paste a link.
+- Set **Start** and **End** (`1:30`, `90`, `1m30s`, `1:02:03` all work), pick a **Format** (MP4, WebM, MP3, M4A, OGG, Opus) and, for video, a **Quality** — the list shows exactly what YouTube offers for that video and container. The estimated size updates as you type.
+- Click **Download clip**. You see the bytes being fetched, then the cut; the file is saved as `Title [HH-MM-SS-HH-MM-SS].ext`. A 15-second 720p clip takes a few seconds.
+
+As in the web version, video is never re-encoded: the clip starts at the nearest keyframe before your start (up to ~5 s early; the page tells you the actual start) and ends one second after your end. Audio-only clips are cut exactly.
+
+### How it works
+
+1. **Video page** — `GET https://www.youtube.com/embed/<id>` gives the embedded player's configuration (client context, visitor id, the player script's URL). The player script is fetched for its signature timestamp.
+2. **Streams** — `POST https://www.youtube.com/youtubei/v1/player` as the `WEB_EMBEDDED_PLAYER` client, telling YouTube the player is embedded on a third-party site. This is the client that needs neither a PO token nor cookies. YouTube answers with every adaptive stream (video-only and audio-only files, each with the byte ranges of its header and its segment index).
+3. **Challenges** — stream URLs carry two obfuscated parameters (`n` and, for some videos, a signature) that must be transformed by code from YouTube's player script. The extension runs [yt-dlp's EJS solver](https://github.com/yt-dlp/ejs) on that script inside a sandboxed page (the only extension context allowed to compile code) and rewrites the URLs.
+4. **Segments** — for the chosen video and audio streams it downloads the header and the index (an ISO BMFF `sidx` box for MP4, Matroska `Cues` for WebM), works out which segments overlap your range, and fetches just those with `Range` requests in ≤8 MiB pieces.
+5. **Cut** — header + segments are handed to ffmpeg.wasm in memory: video copied, audio copied when the container carries it (AAC in MP4/M4A, Opus in WebM/Opus) and otherwise encoded (MP3 with LAME, OGG with Vorbis), `-t` trims the end. The result is offered as a download.
+
+A few request headers have to look like the embedded player's (`Referer`, `Origin`) and a page cannot set those itself, so the extension installs `declarativeNetRequest` **session rules scoped to its own tab** — your normal YouTube browsing is untouched, and the rules vanish when the tab closes.
+
+### Limits
+
+- **Videos with embedding disabled** (“Playback on other websites has been disabled by the video owner”), **age-restricted**, **private**, **members-only** and **live** videos cannot be fetched — the embedded-player client YouTube exposes to third-party sites does not get them, and the extension deliberately uses no account. The page says which case it hit.
+- The clip is assembled **in memory**: keep clips under roughly 1 GB (the page warns above 500 MB and refuses above 1.5 GB). For very long, very high-resolution clips use the web version or a lower quality.
+- ffmpeg.wasm is single-threaded; copying is fast, but MP3/OGG encoding of long clips takes a while.
+- YouTube changes its player regularly. If clips suddenly fail with “Could not solve YouTube's player challenge”, update the solver: `cd backend && uv lock --upgrade-package yt-dlp-ejs`, then `cd ../extension && npm run vendor` and click **Reload** on `chrome://extensions`.
+
+### Permissions it asks for
+
+| Permission | Why |
+|-----------|-----|
+| `https://www.youtube.com/*`, `https://*.googlevideo.com/*` | Fetch the video page, the player API and the media bytes cross-origin from the extension page |
+| `declarativeNetRequestWithHostAccess` | Set `Referer`/`Origin` on the extension's own requests to those two hosts (session rules, this tab only) |
+
+No `tabs`, `cookies`, `downloads`, `storage` or `<all_urls>`. Requests are sent without cookies (`credentials: "omit"`), so your YouTube login is never used.
+
+### Develop and test
+
+```bash
+cd extension
+npm test                # unit tests: link parsing, timestamps, format selection, sidx/Cues parsers (ffmpeg fixtures)
+npm run test:e2e        # real Chrome + real YouTube: loads the unpacked extension and cuts six clips (needs network)
+HEADED=1 npm run test:e2e   # same, watching the browser
+```
+
+The e2e harness uses Playwright with your installed Google Chrome. Chrome 137+ ignores `--load-extension`, so it loads the folder through the DevTools protocol (`Extensions.loadUnpacked`, enabled by `--enable-unsafe-extension-debugging`); this only matters for automation — **Load unpacked** in `chrome://extensions` works as usual.
+
+Source map: [manifest.json](extension/manifest.json) · [src/youtube.js](extension/src/youtube.js) (embedded client) · [src/challenges.js](extension/src/challenges.js) + [src/sandbox.js](extension/src/sandbox.js) (EJS solver) · [src/segments.js](extension/src/segments.js) (sidx/Cues) · [src/clip.js](extension/src/clip.js) (job) · [src/mux.js](extension/src/mux.js) (ffmpeg.wasm) · [src/netrules.js](extension/src/netrules.js) (header rules) · [src/ui.js](extension/src/ui.js) (page).
+
 ## Repository layout
 
 ```text
@@ -63,6 +132,7 @@ backend/     FastAPI service (Python 3.12, uv). Dockerfile installs ffmpeg + Den
     media/     yt-dlp extractor + error classification, ffmpeg streamer, keyframe probe, in-memory cache
   tests/       unit + integration (offline: synthetic media generated with ffmpeg) + opt-in live tests
 frontend/    Vite + React 19 + TypeScript single page. vercel.json rewrites everything to index.html.
+extension/   Chrome extension (MV3) doing the same job entirely in the browser; load unpacked from this folder.
 render.yaml  Render Blueprint for the API (one free Docker web service)
 specs/       Spec Kit artifacts: spec, plan, research, data model, contracts, quickstart, tasks
 ```
@@ -343,7 +413,7 @@ These are properties of the hosting, not bugs:
 ### YouTube says `bot_check`
 Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to prove it is human ("Sign in to confirm you're not a bot") — routine for datacenter ranges such as Render's, where in our tests 7 of 8 videos were challenged.
 
-**The fix is a browser-session cookies file** (a logged-out guest session first, a spare account if that is refused) or hosting on a residential IP — follow [Clear YouTube's bot check with a cookies file](#clear-youtubes-bot-check-with-a-cookies-file). yt-dlp's own error text points the same way: *"Use --cookies-from-browser or --cookies for the authentication."*
+**The fix is a browser-session cookies file** (a logged-out guest session first, a spare account if that is refused) or hosting on a residential IP — follow [Clear YouTube's bot check with a cookies file](#clear-youtubes-bot-check-with-a-cookies-file). yt-dlp's own error text points the same way: *"Use --cookies-from-browser or --cookies for the authentication."* **Or skip the server entirely**: the [Chrome extension](#chrome-extension-no-server) does the same job from your own browser and IP, where the check does not apply.
 
 **What the image already does, and why it is not enough on Render.** YouTube normally accepts requests from flagged IPs when they carry a *PO token* (Proof of Origin, produced by Google's BotGuard). The Docker image bundles [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider): `start.sh` launches its Deno server on loopback (`POT_PROVIDER_URL`), the matching yt-dlp plugin fetches tokens from it, and `YTDLP_FETCH_POT=always` attaches them to the player request as well as to media URLs. Tokens live only in the server's memory. On Render the diagnostics show the tokens being issued for every client (`web_embedded`, `tv_downgraded`, `mweb`, and earlier `tv_simply`) and YouTube still answering `LOGIN_REQUIRED` — the IP range is challenged regardless of attestation. The provider stays in the image because it is what makes the media URLs work once a session is present, and because it is sufficient on less-flagged hosts.
 
@@ -359,7 +429,7 @@ Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to
 
 To run without the provider (e.g. on a residential IP), set `POT_PROVIDER_URL` empty and `YTDLP_PLAYER_CLIENTS` empty; yt-dlp then uses its default clients.
 
-**Why not fetch the video some other way?** There is no other way to the bytes, and it is worth knowing why so you do not go looking: every stream URL comes from the same player API that is being challenged, the URL is bound to the IP that requested it (anyone else gets 403), and neither that API nor the media CDN sends CORS headers for third-party sites, so the browser can do neither the extraction nor the cutting (verified: the API answers 403 to a foreign `Origin`; the CDN serves bytes but without `Access-Control-Allow-Origin`). Third-party front-ends (Piped, Invidious) either no longer exist or put their media proxies behind bot challenges. The only variables are the IP the API is called from and whether a browser session accompanies the call — hence the sections above.
+**Why not fetch the video some other way?** There is no other way to the bytes for a *server*, and it is worth knowing why so you do not go looking: every stream URL comes from the same player API that is being challenged, the URL is bound to the IP that requested it (anyone else gets 403), and neither that API nor the media CDN sends CORS headers for third-party sites, so a web page can do neither the extraction nor the cutting (verified: the API answers 403 to a foreign `Origin`; the CDN serves bytes but without `Access-Control-Allow-Origin`). Third-party front-ends (Piped, Invidious) either no longer exist or put their media proxies behind bot challenges. The only variables are the IP the API is called from and whether a browser session accompanies the call — hence the sections above. A browser **extension** is the exception: it is exempt from CORS and runs from your own IP, which is why the [Chrome extension](#chrome-extension-no-server) exists.
 
 ### `cookies.available: false` or `logged_in: false` in `/api/health`
 `configured` is true but the file could not be used; the Render log line starting with `YTDLP_COOKIES_FILE` says why:

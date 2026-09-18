@@ -43,6 +43,8 @@ Any "frontend-only" tool that appears to work is either a browser extension or i
 
 So the media bytes can only be obtained by the process that called the player API, from an IP (or with a session) YouTube accepts. The remaining levers are therefore about *where* the API is called from: a browser session file on Render (guest or account), a residential host (the operator's machine, Docker + tunnel), another cloud region, or a residential proxy — see README.
 
+**Built as a consequence (2026-09-18): `extension/`, a Chrome MV3 extension.** Extensions are exempt from CORS for hosts they hold permissions on and run from the user's own IP, so the whole pipeline moves into the browser: `WEB_EMBEDDED_PLAYER` InnerTube client (no PO token, no cookies; embed page fetched with a third-party `Referer` so its `encryptedHostFlags` match `thirdParty.embedUrl`, and the API rejects a `chrome-extension://` Origin — both fixed with tab-scoped `declarativeNetRequest` session rules), yt-dlp's EJS solver for `n`/sig run in a manifest `sandbox` page (it needs `Function()`), `sidx`/`Cues` parsing to fetch only the overlapping segments (≤8 MiB ranges), and ffmpeg.wasm for the cut/mux (video copy; AAC/Opus copy; MP3/Vorbis encode). Verified end to end in Chrome 152 for all six formats. Known gaps inherent to the embedded client: embedding-disabled, age-restricted, private, members-only and live videos; clips are assembled in memory (~1 GB practical ceiling).
+
 ### All-on-Vercel alternative (evaluated, not chosen)
 
 The API could run as a Vercel Function instead of a Render web service (single platform, ~1–3 s cold start instead of ~60 s, 100 GB/month transfer instead of 5 GB, 2 GB RAM / 1 vCPU instead of 512 MB / 0.1 CPU). Verified limits that argued against it:

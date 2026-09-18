@@ -1,0 +1,19 @@
+{
+  "name": "yt-clip-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome extension (Manifest V3) that cuts a YouTube clip inside the browser: InnerTube embedded-player client, yt-dlp's EJS challenge solver and ffmpeg.wasm. Load unpacked from this folder.",
+  "type": "module",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "icons": "python3 scripts/icons.py",
+    "zip": "node scripts/zip.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "test:e2e": "node tests/e2e/clip.e2e.mjs"
+  },
+  "devDependencies": {
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "playwright-core": "^1.58.0"
+  }
+}

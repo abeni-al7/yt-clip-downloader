@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>YouTube Clip Download</title>
+    <link rel="icon" href="icons/icon48.png" />
+    <link rel="stylesheet" href="ui.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="masthead">
+        <img src="icons/icon48.png" alt="" width="36" height="36" />
+        <div>
+          <h1>YouTube Clip Download</h1>
+          <p>Cut just the part you want. Everything happens in this browser tab — no server, no account.</p>
+        </div>
+      </header>
+
+      <form id="resolve-form" class="card" autocomplete="off">
+        <label for="url">YouTube link</label>
+        <div class="row">
+          <input id="url" name="url" type="text" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" spellcheck="false" required />
+          <button id="load" type="submit" class="primary">Load</button>
+        </div>
+        <p id="resolve-status" class="status" role="status"></p>
+      </form>
+
+      <section id="video" class="card hidden" aria-live="polite">
+        <div class="video">
+          <img id="thumb" alt="" width="160" height="90" />
+          <div class="meta">
+            <h2 id="title"></h2>
+            <p id="byline" class="muted"></p>
+          </div>
+        </div>
+
+        <form id="clip-form" autocomplete="off">
+          <div class="grid">
+            <div class="field">
+              <label for="start">Start</label>
+              <input id="start" name="start" type="text" inputmode="numeric" placeholder="0:00" />
+            </div>
+            <div class="field">
+              <label for="end">End</label>
+              <input id="end" name="end" type="text" inputmode="numeric" placeholder="0:30" />
+            </div>
+            <div class="field">
+              <label for="format">Format</label>
+              <select id="format" name="format"></select>
+            </div>
+            <div class="field" id="quality-field">
+              <label for="quality">Quality</label>
+              <select id="quality" name="quality"></select>
+            </div>
+          </div>
+          <p id="estimate" class="muted"></p>
+          <div class="row actions">
+            <button id="download" type="submit" class="primary">Download clip</button>
+            <button id="cancel" type="button" class="ghost hidden">Cancel</button>
+          </div>
+          <div id="progress" class="progress hidden">
+            <div class="bar"><div id="bar-fill" class="fill"></div></div>
+            <p id="progress-text" class="status" role="status"></p>
+          </div>
+          <p id="clip-error" class="error hidden" role="alert"></p>
+          <p id="done" class="done hidden" role="status"></p>
+        </form>
+      </section>
+
+      <p id="resolve-error" class="error hidden" role="alert"></p>
+
+      <footer class="muted small">
+        Clips start at the nearest keyframe before your start time (up to a few seconds early) and end one second after your end time. Video is never re-encoded.
+        Large clips are assembled in memory: keep them under about 1 GB.
+      </footer>
+    </main>
+    <script type="module" src="src/ui.js"></script>
+  </body>
+</html>
