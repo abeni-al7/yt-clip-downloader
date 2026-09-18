@@ -1,7 +1,7 @@
 """Capacity guard for concurrent ffmpeg streams (not a quota — see research R5)."""
 
-from ytclip.api.errors import ApiError
 from ytclip.domain.models import ErrorCode
+from ytclip.errors import ApiError
 
 RETRY_AFTER_S = 15
 

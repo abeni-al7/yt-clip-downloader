@@ -47,9 +47,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], ErrorCode], ...] = (
         ErrorCode.video_unavailable,
     ),
     (
-        re.compile(
-            r"not available in your country|geo.?restricted|blocked it in your country", re.I
-        ),
+        re.compile(r"available in your country|geo.?restricted|blocked it in your country", re.I),
         ErrorCode.geo_blocked,
     ),
     (re.compile(r"\bdrm\b", re.I), ErrorCode.drm_protected),

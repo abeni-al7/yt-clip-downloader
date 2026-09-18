@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from ytclip.api import health
+from ytclip.api import clip, health, videos
 from ytclip.api.errors import register_handlers
 from ytclip.config import Settings
 from ytclip.limits import StreamSlots
@@ -39,6 +39,8 @@ def create_app(settings: Settings | None = None, extractor: Extractor | None = N
     )
     register_handlers(app)
     app.include_router(health.router)
+    app.include_router(videos.router)
+    app.include_router(clip.router)
     return app
 
 
