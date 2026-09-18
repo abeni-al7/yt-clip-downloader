@@ -34,6 +34,15 @@ The user asked whether a frontend-only build would do. It cannot, for reasons ou
 
 Any "frontend-only" tool that appears to work is either a browser extension or is secretly calling a proxy. A proxy that must download the bytes anyway might as well cut them — which is exactly the stateless `GET /api/clip` endpoint (R1). That endpoint is the minimum possible backend: no database, no files, no jobs.
 
+**Re-verified 2026-09-18, after the bot check appeared on Render ("is there a source other than the blocked player API?")** — no:
+
+- `POST https://www.youtube.com/youtubei/v1/player` with `Origin: https://<app>.vercel.app` → HTTP 403 for both the preflight and the request; a page cannot do the extraction.
+- A live `googlevideo.com` URL fetched with that `Origin` → `206 Partial Content` but **no** `Access-Control-Allow-Origin`; a page cannot read the bytes either.
+- Every client yt-dlp knows goes through that same player endpoint; the check is per IP, not per client (`android_vr` additionally needs a DroidGuard PO token nobody can mint server-side; `tv`/`tv_simply` without a session answer `UNPLAYABLE`).
+- Community front-ends: the Piped instance directory is offline; the Invidious directory lists 11 instances of which one exposes its API — it returns formats, but its media proxy (`local=true`) sits behind an Anubis proof-of-work challenge (HTML "Making sure you're not a bot!", no bytes for a server), and its direct URLs are bound to *its* IP. Not a foundation.
+
+So the media bytes can only be obtained by the process that called the player API, from an IP (or with a session) YouTube accepts. The remaining levers are therefore about *where* the API is called from: a browser session file on Render (guest or account), a residential host (the operator's machine, Docker + tunnel), another cloud region, or a residential proxy — see README.
+
 ### All-on-Vercel alternative (evaluated, not chosen)
 
 The API could run as a Vercel Function instead of a Render web service (single platform, ~1–3 s cold start instead of ~60 s, 100 GB/month transfer instead of 5 GB, 2 GB RAM / 1 vCPU instead of 512 MB / 0.1 CPU). Verified limits that argued against it:

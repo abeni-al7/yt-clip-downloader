@@ -359,6 +359,8 @@ Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to
 
 To run without the provider (e.g. on a residential IP), set `POT_PROVIDER_URL` empty and `YTDLP_PLAYER_CLIENTS` empty; yt-dlp then uses its default clients.
 
+**Why not fetch the video some other way?** There is no other way to the bytes, and it is worth knowing why so you do not go looking: every stream URL comes from the same player API that is being challenged, the URL is bound to the IP that requested it (anyone else gets 403), and neither that API nor the media CDN sends CORS headers for third-party sites, so the browser can do neither the extraction nor the cutting (verified: the API answers 403 to a foreign `Origin`; the CDN serves bytes but without `Access-Control-Allow-Origin`). Third-party front-ends (Piped, Invidious) either no longer exist or put their media proxies behind bot challenges. The only variables are the IP the API is called from and whether a browser session accompanies the call — hence the sections above.
+
 ### `cookies.available: false` or `logged_in: false` in `/api/health`
 `configured` is true but the file could not be used; the Render log line starting with `YTDLP_COOKIES_FILE` says why:
 
