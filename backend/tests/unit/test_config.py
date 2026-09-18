@@ -7,8 +7,11 @@ from ytclip.media.extractor import YtDlpExtractor, _YtDlpLogger, parse_extractor
 def test_defaults_target_datacenter_friendly_clients_with_po_tokens() -> None:
     s = Settings.from_env({})
     assert s.ytdlp_player_clients == Settings().ytdlp_player_clients
+    # yt-dlp's own defaults for a logged-in session come first: cookies are the bot-check fix.
+    assert s.ytdlp_player_clients[:2] == ("web_embedded", "tv_downgraded")
     assert "mweb" in s.ytdlp_player_clients  # the client yt-dlp's wiki recommends with a PO token
     assert s.ytdlp_player_clients[-1] == "visionos"  # the token-free fallback stays last
+    assert s.ytdlp_cookies_file is None
     assert s.ytdlp_fetch_pot == "always"
     assert s.pot_provider_url == "http://127.0.0.1:4416"
     assert s.js_runtime == "deno"

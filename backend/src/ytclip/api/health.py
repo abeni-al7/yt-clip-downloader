@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, Request, Response
 
 from ytclip.domain.models import (
+    CookiesStatus,
     Health,
     PotProviderStatus,
     RuntimeStatus,
@@ -73,13 +74,22 @@ async def health(request: Request, response: Response) -> Health:
     ffmpeg = ffmpeg_status()
     pot_provider = await pot_provider_status(settings.pot_provider_url)
     provider_ok = pot_provider.available or settings.pot_provider_url is None
+    prepared = state.extractor.cookies
+    cookies = CookiesStatus(
+        configured=settings.ytdlp_cookies_file is not None,
+        available=prepared is not None,
+        logged_in=prepared is not None and prepared.logged_in,
+    )
+    cookies_ok = cookies.available or not cookies.configured
     response.headers["Cache-Control"] = "no-store"
+    healthy = ffmpeg.available and runtime.available and provider_ok and cookies_ok
     return Health(
-        status="ok" if ffmpeg.available and runtime.available and provider_ok else "degraded",
+        status="ok" if healthy else "degraded",
         yt_dlp_version=yt_dlp.version.__version__,
         ffmpeg=ffmpeg,
         js_runtime=runtime,
         pot_provider=pot_provider,
+        cookies=cookies,
         player_clients=list(settings.ytdlp_player_clients),
         streams=StreamStatus(active=state.slots.active, max=state.slots.max),
         rss_mb=_rss_mb(),

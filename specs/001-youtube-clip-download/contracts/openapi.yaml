@@ -285,7 +285,7 @@ components:
 
     Health:
       type: object
-      required: [status, yt_dlp_version, ffmpeg, js_runtime, pot_provider, player_clients, streams]
+      required: [status, yt_dlp_version, ffmpeg, js_runtime, pot_provider, cookies, player_clients, streams]
       properties:
         status: { type: string, enum: [ok, degraded] }
         yt_dlp_version: { type: string }
@@ -306,6 +306,13 @@ components:
             url: { type: [string, "null"] }
             available: { type: boolean }
             version: { type: [string, "null"] }
+        cookies:
+          type: object
+          description: "The operator's YouTube cookies file (`YTDLP_COOKIES_FILE`, research R11) — the fix for the bot check on datacenter IPs. `available` is false when the configured file is unreadable or malformed (then `status` is degraded); `logged_in` tells whether it holds an account session."
+          properties:
+            configured: { type: boolean }
+            available: { type: boolean }
+            logged_in: { type: boolean }
         player_clients:
           type: array
           items: { type: string }

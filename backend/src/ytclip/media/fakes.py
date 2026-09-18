@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ytclip.media.extractor import ExtractionError, classify_error
+from ytclip.media.extractor import ExtractionError, PreparedCookies, classify_error
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +32,7 @@ class FakeExtractor:
         self.no_audio = no_audio
         self.title = title
         self.diagnostics = diagnostics or []
+        self.cookies: PreparedCookies | None = None
         self.calls = 0
 
     async def resolve(self, video_id: str) -> dict[str, Any]:

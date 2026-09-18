@@ -1,8 +1,14 @@
 """YouTube metadata extraction behind a small seam, plus error classification (research R3, R11)."""
 
 import asyncio
+import contextlib
 import logging
+import os
 import re
+import tempfile
+import threading
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from ytclip.config import Settings
@@ -24,8 +30,65 @@ class ExtractionError(Exception):
         super().__init__(message or code.value)
 
 
+@dataclass(frozen=True, slots=True)
+class PreparedCookies:
+    """The operator's cookies, copied to a private writable file yt-dlp may rewrite."""
+
+    path: str
+    # LOGIN_INFO plus a SAPISID-family cookie: what yt-dlp itself treats as "logged in".
+    logged_in: bool
+
+
 class Extractor(Protocol):
+    cookies: PreparedCookies | None
+
     async def resolve(self, video_id: str) -> dict[str, Any]: ...
+
+
+_AUTH_COOKIES = {"SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"}
+
+
+def prepare_cookies(source: str | None) -> PreparedCookies | None:
+    """Copies `YTDLP_COOKIES_FILE` to a private 0600 file and checks it is usable.
+
+    Two yt-dlp behaviours make the copy necessary: it rewrites the cookie file after every run
+    (YouTube rotates session cookies) while Render mounts Secret Files read-only, and it runs
+    silently *without* cookies when the file is unreadable. Problems are logged and reported by
+    /api/health instead of surfacing later as an unexplained bot_check. Cookie values are never
+    logged.
+    """
+    if not source:
+        return None
+    from yt_dlp.cookies import YoutubeDLCookieJar
+
+    try:
+        data = Path(source).read_bytes()
+    except OSError as exc:
+        log.error("YTDLP_COOKIES_FILE %s cannot be read (%s); running without cookies", source, exc)
+        return None
+    fd, path = tempfile.mkstemp(prefix="ytclip-cookies-", suffix=".txt")
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    jar = YoutubeDLCookieJar(path)
+    try:
+        jar.load()
+    except (OSError, ValueError):
+        os.unlink(path)
+        log.error(
+            "YTDLP_COOKIES_FILE %s is not a Netscape-format cookies file; running without cookies",
+            source,
+        )
+        return None
+    names = {cookie.name for cookie in jar if cookie.domain.endswith("youtube.com")}
+    logged_in = "LOGIN_INFO" in names and bool(names & _AUTH_COOKIES)
+    if not logged_in:
+        log.warning(
+            "YTDLP_COOKIES_FILE %s holds no logged-in YouTube session (LOGIN_INFO + SAPISID); "
+            "anonymous cookies do not clear YouTube's bot check",
+            source,
+        )
+    log.info("yt-dlp cookies loaded from %s (logged in: %s)", source, logged_in)
+    return PreparedCookies(path=path, logged_in=logged_in)
 
 
 # Ordered: the first matching pattern wins, so the bot check must precede the age check
@@ -157,6 +220,9 @@ class _YtDlpLogger:
 class YtDlpExtractor:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        self.cookies = prepare_cookies(settings.ytdlp_cookies_file)
+        # yt-dlp rewrites the cookie file when a run ends; concurrent runs must not interleave.
+        self._cookies_lock = threading.Lock()
 
     def extractor_args(self) -> dict[str, dict[str, list[str]]]:
         s = self._settings
@@ -188,8 +254,8 @@ class YtDlpExtractor:
             "js_runtimes": {s.js_runtime: {}} if s.js_runtime else {},
             "extractor_args": self.extractor_args(),
         }
-        if s.ytdlp_cookies_file:
-            opts["cookiefile"] = s.ytdlp_cookies_file
+        if self.cookies:
+            opts["cookiefile"] = self.cookies.path
         if s.ytdlp_proxy:
             opts["proxy"] = s.ytdlp_proxy
         return opts
@@ -199,10 +265,12 @@ class YtDlpExtractor:
         logger = _YtDlpLogger()
         opts = self.options(logger)
 
+        guard = self._cookies_lock if self.cookies else contextlib.nullcontext()
+
         def run() -> dict[str, Any]:
             import yt_dlp
 
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            with guard, yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 return ydl.sanitize_info(info)
 

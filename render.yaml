@@ -24,13 +24,17 @@ services:
       # Bundled bgutil PO-token server (started by start.sh); set empty to disable.
       - key: POT_PROVIDER_URL
         value: http://127.0.0.1:4416
-      # yt-dlp clients tried in order; TV/embedded clients are gated differently from web ones
-      # on flagged datacenter IPs. bgutil attests all but visionos.
+      # yt-dlp clients tried in order: yt-dlp's logged-in defaults first (cookies below), then
+      # mweb (attested by bgutil) and the token-free visionos.
       - key: YTDLP_PLAYER_CLIENTS
-        value: tv_simply,tv_downgraded,web_embedded,mweb,visionos
-      # "always" also attaches a player PO token, which is what clears YouTube's bot check.
+        value: web_embedded,tv_downgraded,mweb,visionos
+      # "always" also attaches a player PO token, not only the media-URL one.
       - key: YTDLP_FETCH_POT
         value: always
+      # YouTube's bot check on Render's IPs is cleared by a logged-in cookies file: upload it as
+      # a Secret File named cookies.txt (Dashboard -> Environment -> Secret Files), then set
+      #   YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt
+      # in the Dashboard. See README -> Troubleshooting -> bot_check.
       - key: LOG_LEVEL
         value: INFO
       - key: PYTHONUNBUFFERED

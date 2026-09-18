@@ -30,6 +30,7 @@ export interface Health {
   ffmpeg: { available: boolean; version: string | null };
   js_runtime: { name: string | null; available: boolean };
   pot_provider: { url: string | null; available: boolean; version: string | null };
+  cookies: { configured: boolean; available: boolean; logged_in: boolean };
   player_clients: string[];
   streams: { active: number; max: number };
   rss_mb: number | null;

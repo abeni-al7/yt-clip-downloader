@@ -21,7 +21,9 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --create-home --uid 10001 app
+    && useradd --system --create-home --uid 10001 app \
+    # Render mounts Secret Files (e.g. YTDLP_COOKIES_FILE) readable by group 1000 only.
+    && groupadd --gid 1000 secrets && usermod --append --groups secrets app
 
 # yt-dlp needs a JavaScript runtime for full YouTube support; Deno is the recommended one.
 COPY --from=deno /deno /usr/local/bin/deno

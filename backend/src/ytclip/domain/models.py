@@ -128,6 +128,12 @@ class PotProviderStatus(BaseModel):
     version: str | None = None
 
 
+class CookiesStatus(BaseModel):
+    configured: bool
+    available: bool
+    logged_in: bool
+
+
 class StreamStatus(BaseModel):
     active: int
     max: int
@@ -139,6 +145,7 @@ class Health(BaseModel):
     ffmpeg: ToolStatus
     js_runtime: RuntimeStatus
     pot_provider: PotProviderStatus
+    cookies: CookiesStatus
     player_clients: list[str]
     streams: StreamStatus
     rss_mb: int | None = None

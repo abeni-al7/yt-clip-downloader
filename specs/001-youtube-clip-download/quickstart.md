@@ -52,7 +52,7 @@ Expected: all green. Integration tests stream clips from generated media through
 1. Push the repo to GitHub. `render.yaml` at the repo root declares one web service: `runtime: docker`, `dockerfilePath: backend/Dockerfile`, `dockerContext: backend`, `plan: free`, `healthCheckPath: /api/health`, env vars `ALLOWED_ORIGINS`, `FRONTEND_ORIGIN`, `MAX_CONCURRENT_STREAMS=2`, `PYTHONUNBUFFERED=1`.
 2. Render Dashboard → *New → Blueprint* → select the repo → apply. First build ≈ 5–8 min (ffmpeg apt + uv sync); later builds reuse layers.
 3. Note the URL `https://<service>.onrender.com`. Set `ALLOWED_ORIGINS` to the Vercel production URL once known (comma-separated; `https://*.vercel.app` previews are matched by regex).
-4. Optional secrets (only if S0 fails with `bot_check`): Render → *Environment → Secret Files* → upload `cookies.txt`, set `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`. Use an account you are prepared to lose access to; this is at your own risk.
+4. Secrets (needed on Render — S0 fails with `bot_check` there even with PO tokens, research R11 outcome): Render → *Environment → Secret Files* → upload `cookies.txt` exported from a **throwaway** account with yt-dlp's incognito procedure, set `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`, and confirm `/api/health` shows `cookies {"configured":true,"available":true,"logged_in":true}`. Use an account you are prepared to lose access to; this is at your own risk. Full steps: README → *Clear YouTube's bot check with a cookies file*.
 
 ### Frontend → Vercel Hobby (static)
 
@@ -82,7 +82,7 @@ curl -s -o /tmp/s0.mp4 -D - "$API/api/clip?v=<id>&start=60&end=80&format=mp4&hei
 ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/s0.mp4     # 20–30
 ```
 
-Expected: 200s and a playable file. If resolve returns `502 bot_check`, first confirm `/api/health` shows `pot_provider.available: true` and `player_clients` containing `mweb` (the image bundles a PO-token provider precisely for this — research R11 outcome), read `details.diagnostics` in the error body, and try other `YTDLP_PLAYER_CLIENTS` values from the Render Environment tab; only then decide between cookies secret file (own risk), residential proxy, or a different host — the rest of the plan is unaffected but this deployment is.
+Expected: 200s and a playable file. If resolve returns `502 bot_check`, confirm `/api/health` shows `pot_provider.available: true` and `cookies.available: true` with `logged_in: true` (research R11 outcome: on Render the PO-token provider alone does not clear the check; a logged-in cookies Secret File does), read `details.diagnostics` in the error body (per-client playability, token retrieval), and only then consider other `YTDLP_PLAYER_CLIENTS` values, a residential proxy, or a different host — the rest of the plan is unaffected but this deployment is.
 
 ### S1 — Cut and download a clip (US1, P1)
 

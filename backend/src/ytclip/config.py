@@ -29,16 +29,16 @@ class Settings:
     ytdlp_cookies_file: str | None = None
     ytdlp_proxy: str | None = None
     # Clients tried in order on every extraction; formats from all that answer are merged.
-    # TV/embedded clients are gated differently from web/mobile ones on flagged datacenter IPs;
-    # bgutil can attest every client here except visionos (kept as a token-free extra).
+    # The first two are yt-dlp's own defaults for a logged-in session (YTDLP_COOKIES_FILE, the
+    # fix for YouTube's bot check on datacenter IPs); yt-dlp skips clients that cannot carry
+    # cookies (visionos) when cookies are present. bgutil attests every client except visionos.
     ytdlp_player_clients: tuple[str, ...] = (
-        "tv_simply",
-        "tv_downgraded",
         "web_embedded",
+        "tv_downgraded",
         "mweb",
         "visionos",
     )
-    # "always" also attaches a *player* PO token, which is what clears the bot check.
+    # "always" also attaches a *player* PO token, not only the media-URL (GVS) one.
     ytdlp_fetch_pot: str = "always"
     ytdlp_extractor_args: str | None = None
     pot_provider_url: str | None = "http://127.0.0.1:4416"

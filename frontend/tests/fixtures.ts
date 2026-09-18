@@ -27,7 +27,8 @@ export const HEALTH: Health = {
   ffmpeg: { available: true, version: "7.1" },
   js_runtime: { name: "deno", available: true },
   pot_provider: { url: "http://127.0.0.1:4416", available: true, version: "2.0.0" },
-  player_clients: ["mweb", "visionos"],
+  cookies: { configured: true, available: true, logged_in: true },
+  player_clients: ["web_embedded", "tv_downgraded", "mweb", "visionos"],
   streams: { active: 0, max: 2 },
   rss_mb: 120,
 };

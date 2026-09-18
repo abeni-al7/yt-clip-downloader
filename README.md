@@ -174,17 +174,46 @@ The repository contains a Blueprint, [render.yaml](render.yaml), describing one 
    API=https://<service-name>.onrender.com
    curl -s $API/api/health | jq
    # expect: "status":"ok", ffmpeg.available true, js_runtime {"name":"deno","available":true},
-   #         pot_provider {"available":true,"version":"2.0.0"}, player_clients ["mweb","visionos"]
+   #         pot_provider {"available":true,"version":"2.0.0"},
+   #         cookies {"configured":false,...}, player_clients ["web_embedded","tv_downgraded","mweb","visionos"]
    ```
 
-7. **Bot-check go/no-go** (do this before anything else — see [Free-tier realities](#free-tier-realities)):
+7. **Bot-check go/no-go**:
 
    ```bash
    curl -s $API/api/videos/resolve -H 'content-type: application/json' \
         -d '{"url":"https://www.youtube.com/watch?v=jNQXAC9IVRw"}' | jq '{title, duration_s}'
    ```
 
-   If this returns `"code": "bot_check"`, YouTube is challenging Render's IP range even with PO tokens. See [Troubleshooting → bot_check](#youtube-says-bot_check).
+   If this returns `"code": "bot_check"` — **expected on Render**, see the next section — add a cookies file. If it returns the title, you are done with the backend.
+
+### Clear YouTube's bot check with a cookies file
+
+YouTube answers requests from cloud IP ranges such as Render's with *"Sign in to confirm you're not a bot"* (`LOGIN_REQUIRED`). The image already attaches PO tokens (see [Troubleshooting](#youtube-says-bot_check)); on Render's IPs that was **not** enough in our tests — the only thing yt-dlp offers that clears it is a **logged-in YouTube session (cookies)**. This takes about five minutes and needs no rebuild.
+
+> **Use a throwaway Google account.** yt-dlp's wiki warns that YouTube may temporarily or permanently restrict an account used this way. Never use your main account. The account needs no subscriptions — logged in is enough.
+
+1. **Export the cookies** so that the browser never rotates them (yt-dlp's [recommended procedure](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies)):
+   1. Open a **private/incognito window**, go to `https://www.youtube.com` and log in with the throwaway account.
+   2. In the *same tab*, navigate to `https://www.youtube.com/robots.txt` (keep this the only private tab).
+   3. Export the `youtube.com` cookies in **Netscape format** with a browser extension such as *Get cookies.txt LOCALLY* (Chrome/Edge) or *cookies.txt* (Firefox). The file starts with `# Netscape HTTP Cookie File` and contains lines for `LOGIN_INFO`, `SAPISID`, `__Secure-3PAPISID`, ….
+   4. **Close the private window** and do not log into that account in a browser again — every login rotates the cookies and invalidates the file.
+2. **Upload it to Render**: Dashboard → your service → **Environment** → **Secret Files** → **Add Secret File**. Filename `cookies.txt`, paste the file's contents, **Save Changes**. Render mounts it read-only at `/etc/secrets/cookies.txt` (the image's user is in the group Render grants access to).
+3. **Tell the API where it is**: same page, **Environment Variables** → add `YTDLP_COOKIES_FILE` = `/etc/secrets/cookies.txt` → **Save and deploy** (no rebuild needed; a restart is enough).
+4. **Verify**:
+
+   ```bash
+   curl -s $API/api/health | jq .cookies
+   # {"configured": true, "available": true, "logged_in": true}
+   curl -s $API/api/videos/resolve -H 'content-type: application/json' \
+        -d '{"url":"https://www.youtube.com/watch?v=jNQXAC9IVRw"}' | jq '{title, duration_s}'
+   ```
+
+   `available: false` → the path is wrong or the file is not Netscape format (see [Troubleshooting](#cookiesavailable-false-or-logged_in-false-in-apihealth)). `logged_in: false` → the export happened while not logged in.
+
+What happens with the file: at startup the API copies it to a private `0600` file in the container's `/tmp` (yt-dlp rewrites the file when YouTube rotates session cookies, and the mounted secret is read-only), passes it only to yt-dlp, and never logs, returns or stores cookie values anywhere else. The copy disappears with the container; the Secret File stays on Render. When YouTube eventually invalidates the session (the API starts answering `bot_check` again, and the Render logs show *"The provided YouTube account cookies are no longer valid"*), repeat step 1 and paste the new contents into the same Secret File.
+
+With cookies present yt-dlp uses the clients that support them (`web_embedded`, `tv_downgraded`, `mweb`) and skips `visionos` with a one-line warning.
 
 What the Blueprint sets (Dashboard → your service → Environment):
 
@@ -195,8 +224,9 @@ What the Blueprint sets (Dashboard → your service → Environment):
 | `MAX_CONCURRENT_STREAMS` | `2` | Concurrent ffmpeg streams; the third request gets `503 busy` and retries |
 | `JS_RUNTIME` | `deno` | JavaScript runtime for yt-dlp (Deno is in the image) |
 | `POT_PROVIDER_URL` | `http://127.0.0.1:4416` | The bundled PO-token server (see [bot_check](#youtube-says-bot_check)); empty disables it |
-| `YTDLP_PLAYER_CLIENTS` | `mweb,visionos` | yt-dlp player clients to try, in order |
-| `YTDLP_FETCH_POT` | `always` | Attach PO tokens to player requests too (what actually clears the bot check) |
+| `YTDLP_PLAYER_CLIENTS` | `web_embedded,tv_downgraded,mweb,visionos` | yt-dlp player clients to try, in order |
+| `YTDLP_FETCH_POT` | `always` | Attach PO tokens to player requests too, not only to media URLs |
+| `YTDLP_COOKIES_FILE` | *(you set it: `/etc/secrets/cookies.txt`)* | The logged-in cookies Secret File that clears the bot check (previous section) |
 | `LOG_LEVEL` | `INFO` | Set `DEBUG` to get yt-dlp's verbose log in Render's log stream |
 | `PYTHONUNBUFFERED` | `1` | Real-time logs |
 
@@ -257,11 +287,11 @@ Vercel's Hobby plan is for **non-commercial, personal** use.
 | `MAX_CONCURRENT_STREAMS` | `2` | Parallel ffmpeg streams before answering `503 busy` (a capacity guard for 512 MB RAM, not a quota) |
 | `JS_RUNTIME` | `deno` | yt-dlp JavaScript runtime: `deno`, `node`, `bun`, `quickjs`, or empty to disable |
 | `POT_PROVIDER_URL` | `http://127.0.0.1:4416` | bgutil PO-token HTTP server. `start.sh` launches the bundled one when this points at loopback; point it at an external server or set empty to disable |
-| `YTDLP_PLAYER_CLIENTS` | `mweb,visionos` | Comma-separated yt-dlp `player_client` list; empty means yt-dlp's defaults |
+| `YTDLP_PLAYER_CLIENTS` | `web_embedded,tv_downgraded,mweb,visionos` | Comma-separated yt-dlp `player_client` list (yt-dlp's logged-in defaults first, then the bgutil-attested `mweb` and token-free `visionos`); empty means yt-dlp's defaults |
 | `YTDLP_FETCH_POT` | `always` | yt-dlp `fetch_pot`: `never`, `auto`, or `always` |
 | `YTDLP_EXTRACTOR_ARGS` | *(unset)* | Extra yt-dlp extractor args in CLI syntax, e.g. `youtube:player_skip=configs;formats=missing_pot` (merged over the two above) |
 | `LOG_LEVEL` | `INFO` | App log level; `DEBUG` also enables yt-dlp's verbose output |
-| `YTDLP_COOKIES_FILE` | *(unset)* | Path to a Netscape cookies file for yt-dlp (see bot_check below) |
+| `YTDLP_COOKIES_FILE` | *(unset)* | Netscape-format cookies file of a logged-in (throwaway) YouTube account — the fix for `bot_check` on cloud IPs. Copied once to a private writable file; `/api/health` reports `cookies.available`/`logged_in`; an unreadable or malformed file degrades health instead of being silently ignored |
 | `YTDLP_PROXY` | *(unset)* | Proxy URL for yt-dlp and extraction, e.g. `socks5://user:pass@host:1080` |
 | `CACHE_TTL_S` | `600` | Seconds to keep a video's metadata in memory so Download right after Load needs no second extraction |
 | `CACHE_MAX_ENTRIES` | `50` | Metadata cache size |
@@ -282,26 +312,37 @@ These are properties of the hosting, not bugs:
 - **Very large clips** can also trigger Render's "uncommonly high volume of traffic" suspension. Prefer lower resolutions for multi-hour clips.
 - **0.1 CPU / 512 MB RAM.** Video is never re-encoded, so MP4/WebM/M4A/Opus are cheap. MP3 and OGG *are* transcoded (audio only) and are slower for long clips. The API process plus the bundled PO-token server idle at roughly 220 MB.
 - **Nothing persists** — by design. Downloads run only while your browser is connected; if you close the tab the download stops. Click Download again to re-cut.
-- **YouTube challenges cloud IPs** ("Sign in to confirm you're not a bot"). The image ships a PO-token provider that satisfies this attestation in most cases — see below.
+- **YouTube challenges cloud IPs** ("Sign in to confirm you're not a bot"). On Render this happens for almost every video; a logged-in cookies file fixes it — see [Clear YouTube's bot check](#clear-youtubes-bot-check-with-a-cookies-file).
 
 ## Troubleshooting
 
 ### YouTube says `bot_check`
-Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to prove it is human ("Sign in to confirm you're not a bot") — routine for datacenter ranges such as Render's.
+Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to prove it is human ("Sign in to confirm you're not a bot") — routine for datacenter ranges such as Render's, where in our tests 7 of 8 videos were challenged.
 
-**What the image already does.** YouTube accepts requests from such IPs when they carry a *PO token* (Proof of Origin, produced by Google's BotGuard). The Docker image bundles [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider): `start.sh` launches its Deno server on loopback (`POT_PROVIDER_URL`), the matching yt-dlp plugin fetches tokens from it, and `YTDLP_FETCH_POT=always` attaches them to the player request as well as to media URLs. Tokens live only in the server's memory. yt-dlp is pointed at the `mweb` client (the one the plugin can attest) with `visionos` as a fallback (`YTDLP_PLAYER_CLIENTS`).
+**The fix is a logged-in cookies file** — follow [Clear YouTube's bot check with a cookies file](#clear-youtubes-bot-check-with-a-cookies-file). yt-dlp's own error text says the same: *"Use --cookies-from-browser or --cookies for the authentication."*
 
-**If it still happens:**
+**What the image already does, and why it is not enough on Render.** YouTube normally accepts requests from flagged IPs when they carry a *PO token* (Proof of Origin, produced by Google's BotGuard). The Docker image bundles [bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider): `start.sh` launches its Deno server on loopback (`POT_PROVIDER_URL`), the matching yt-dlp plugin fetches tokens from it, and `YTDLP_FETCH_POT=always` attaches them to the player request as well as to media URLs. Tokens live only in the server's memory. On Render the diagnostics show the tokens being issued for every client (`web_embedded`, `tv_downgraded`, `mweb`, and earlier `tv_simply`) and YouTube still answering `LOGIN_REQUIRED` — the IP range is challenged regardless of attestation. The provider stays in the image because it is what makes the media URLs work once a session is present, and because it is sufficient on less-flagged hosts.
 
-1. Check `/api/health`: `pot_provider.available` must be `true` and `player_clients` should contain `mweb`. If the provider is down the whole health status is `degraded`; read the Render logs for the `[bgutil]` startup lines.
-2. Read the response's `details.diagnostics` — yt-dlp's per-client warnings (e.g. "mweb client https formats require a GVS PO Token"). Set `LOG_LEVEL=DEBUG` on Render (Environment → save; no rebuild) to get yt-dlp's full verbose log, including `Retrieved a player PO Token for mweb client`.
-3. **Update yt-dlp and the provider** (see above); YouTube changes constantly and both projects follow it. Bump `BGUTIL_VERSION`/`DENO_VERSION` in `backend/Dockerfile` together with `bgutil-ytdlp-pot-provider` in `backend/pyproject.toml` — the plugin and server versions must match.
-4. **Try other clients** via `YTDLP_PLAYER_CLIENTS` (no rebuild needed), e.g. `web_embedded,mweb,visionos`, or `tv_downgraded,mweb`. `web` is SABR-only and `tv` is DRM'd without cookies as of yt-dlp 2026.08; `android`/`ios` clients cannot be attested by the bundled provider.
-5. **Cookies (at your own risk)**: export cookies from a browser logged into a throwaway YouTube account (see yt-dlp's wiki on cookies), upload the file as a Render **Secret File** (Environment → Secret Files), and set `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`. YouTube may act against the account.
-6. **Proxy**: set `YTDLP_PROXY` to a residential proxy (paid). The PO-token server keeps working alongside it.
-7. **Different host**: the container is portable — anything with a residential IP works, with or without the provider.
+**If it still happens with cookies:**
+
+1. Check `/api/health`: `cookies` must be `{"configured":true,"available":true,"logged_in":true}` and `pot_provider.available` must be `true` (otherwise the status is `degraded`; see the two sections below).
+2. Read the response's `details.diagnostics` — yt-dlp's per-client trace (PO tokens retrieved, each client's playability status, warnings). Set `LOG_LEVEL=DEBUG` on Render (Environment → save; no rebuild) for yt-dlp's full verbose log.
+3. *"The provided YouTube account cookies are no longer valid"* in the logs: the session was rotated (you logged into the account in a browser, or YouTube expired it). Export again and replace the Secret File's contents.
+4. **Update yt-dlp and the provider** (see [Updating yt-dlp on Render](#updating-yt-dlp-on-render)); YouTube changes constantly and both projects follow it. Bump `BGUTIL_VERSION`/`DENO_VERSION` in `backend/Dockerfile` together with `bgutil-ytdlp-pot-provider` in `backend/pyproject.toml` — the plugin and server versions must match.
+5. **Try other clients** via `YTDLP_PLAYER_CLIENTS` (no rebuild needed), e.g. `tv,web_embedded` — yt-dlp skips clients that cannot carry cookies (`visionos`, `tv_simply`, `android`, `ios`) with a one-line warning when cookies are present. `web` is SABR-only (no direct media URLs).
+6. **Proxy**: set `YTDLP_PROXY` to a residential proxy (paid). Cookies and the PO-token server keep working alongside it.
+7. **Different host**: the container is portable — anything with a residential IP works, usually without cookies.
 
 To run without the provider (e.g. on a residential IP), set `POT_PROVIDER_URL` empty and `YTDLP_PLAYER_CLIENTS` empty; yt-dlp then uses its default clients.
+
+### `cookies.available: false` or `logged_in: false` in `/api/health`
+`configured` is true but the file could not be used; the Render log line starting with `YTDLP_COOKIES_FILE` says why:
+
+- *cannot be read* — the path does not match the Secret File name (it is `/etc/secrets/<filename>`), or the image was rebuilt from a Dockerfile that no longer adds the `app` user to group `1000` (Render grants Secret File access to that group).
+- *not a Netscape-format cookies file* — the extension exported JSON, or the paste lost the tab characters. The first line must be `# Netscape HTTP Cookie File` and each cookie is one tab-separated line.
+- `logged_in: false` — the file has no `LOGIN_INFO` + `SAPISID`-family cookies for `youtube.com`: the export happened while logged out, or from a different site. Anonymous cookies do not clear the bot check.
+
+Cookie values are never logged. The API keeps working without cookies (status `degraded`) so the misconfiguration is visible without taking the service down.
 
 ### `extraction_failed`
 yt-dlp could not read the video; the message contains yt-dlp's own text. Usually fixed by updating yt-dlp.
