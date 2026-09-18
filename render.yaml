@@ -31,10 +31,11 @@ services:
       # "always" also attaches a player PO token, not only the media-URL one.
       - key: YTDLP_FETCH_POT
         value: always
-      # YouTube's bot check on Render's IPs is cleared by a logged-in cookies file: upload it as
-      # a Secret File named cookies.txt (Dashboard -> Environment -> Secret Files), then set
+      # YouTube's bot check on Render's IPs is cleared by a browser-session cookies file (a
+      # logged-out guest session, or a spare account): upload it as a Secret File named
+      # cookies.txt (Dashboard -> Environment -> Secret Files), then set
       #   YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt
-      # in the Dashboard. See README -> Troubleshooting -> bot_check.
+      # in the Dashboard. See README -> Clear YouTube's bot check with a cookies file.
       - key: LOG_LEVEL
         value: INFO
       - key: PYTHONUNBUFFERED

@@ -76,17 +76,31 @@ def test_extractor_points_ytdlp_at_the_copy(tmp_path: Path) -> None:
     assert extractor.options()["cookiefile"] == extractor.cookies.path
 
 
-def test_anonymous_cookies_are_usable_but_not_logged_in(
+def test_guest_cookies_are_usable_but_not_logged_in(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     source = tmp_path / "cookies.txt"
     source.write_text(NETSCAPE_HEADER + cookie_line("VISITOR_INFO1_LIVE", "xyz"))
 
+    with caplog.at_level(logging.INFO, logger="ytclip"):
+        prepared = prepare_cookies(str(source))
+
+    assert prepared is not None and prepared.logged_in is False
+    assert "guest session" in caplog.text
+    assert "WARNING" not in caplog.text  # a guest session is a supported choice, not a mistake
+
+
+def test_cookies_from_another_site_are_flagged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = tmp_path / "cookies.txt"
+    source.write_text(NETSCAPE_HEADER + cookie_line("session", "abc", domain=".example.com"))
+
     with caplog.at_level(logging.WARNING, logger="ytclip"):
         prepared = prepare_cookies(str(source))
 
     assert prepared is not None and prepared.logged_in is False
-    assert "logged-in" in caplog.text
+    assert "exported from youtube.com" in caplog.text
 
 
 def test_missing_or_malformed_files_are_reported_and_ignored(

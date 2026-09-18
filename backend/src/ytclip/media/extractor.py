@@ -81,13 +81,14 @@ def prepare_cookies(source: str | None) -> PreparedCookies | None:
         return None
     names = {cookie.name for cookie in jar if cookie.domain.endswith("youtube.com")}
     logged_in = "LOGIN_INFO" in names and bool(names & _AUTH_COOKIES)
-    if not logged_in:
+    session = "account" if logged_in else "guest"
+    if not logged_in and "VISITOR_INFO1_LIVE" not in names:
         log.warning(
-            "YTDLP_COOKIES_FILE %s holds no logged-in YouTube session (LOGIN_INFO + SAPISID); "
-            "anonymous cookies do not clear YouTube's bot check",
+            "YTDLP_COOKIES_FILE %s has no youtube.com session cookies at all "
+            "(neither VISITOR_INFO1_LIVE nor LOGIN_INFO); was it exported from youtube.com?",
             source,
         )
-    log.info("yt-dlp cookies loaded from %s (logged in: %s)", source, logged_in)
+    log.info("yt-dlp cookies loaded from %s (%s session)", source, session)
     return PreparedCookies(path=path, logged_in=logged_in)
 
 
