@@ -6,7 +6,9 @@ from ytclip.media.extractor import YtDlpExtractor, _YtDlpLogger, parse_extractor
 
 def test_defaults_target_datacenter_friendly_clients_with_po_tokens() -> None:
     s = Settings.from_env({})
-    assert s.ytdlp_player_clients == ("mweb", "visionos")
+    assert s.ytdlp_player_clients == Settings().ytdlp_player_clients
+    assert "mweb" in s.ytdlp_player_clients  # the client yt-dlp's wiki recommends with a PO token
+    assert s.ytdlp_player_clients[-1] == "visionos"  # the token-free fallback stays last
     assert s.ytdlp_fetch_pot == "always"
     assert s.pot_provider_url == "http://127.0.0.1:4416"
     assert s.js_runtime == "deno"
@@ -60,7 +62,7 @@ def test_extractor_args_compose_clients_pot_policy_and_provider() -> None:
     args = YtDlpExtractor(settings).extractor_args()
     assert args["youtube"] == {
         "fetch_pot": ["always"],
-        "player_client": ["mweb", "visionos"],
+        "player_client": list(Settings().ytdlp_player_clients),
         "player_skip": ["configs"],
     }
     assert args["youtubepot-bgutilhttp"] == {"base_url": ["http://127.0.0.1:4416"]}
@@ -91,14 +93,15 @@ def test_ytdlp_logger_keeps_a_chronological_operator_trace() -> None:
         "[debug] [youtube] jNQXAC9IVRw: mweb player response playability status: LOGIN_REQUIRED"
     )
     logger.debug("[debug] [pot] PO Token response from bgutil:http provider: secret")  # token value
-    logger.error("ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you're not a bot")
+    logger.error(
+        "ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you're not a bot"
+    )  # raised anyway
 
     assert logger.diagnostics == [
         "Downloading webpage",
         "WARNING: Unable to download webpage: HTTP Error 429: Too Many Requests",
         "[youtube] jNQXAC9IVRw: Retrieved a player PO Token for mweb client",
         "[youtube] jNQXAC9IVRw: mweb player response playability status: LOGIN_REQUIRED",
-        "ERROR: Sign in to confirm you're not a bot",
     ]
 
 

@@ -150,8 +150,8 @@ class _YtDlpLogger:
         self._keep(msg, "WARNING: ")
 
     def error(self, msg: str) -> None:
+        # Not kept: yt-dlp raises the same text (recorded by resolve()), then logs a traceback.
         log.error("yt-dlp: %s", msg)
-        self._keep(msg, "ERROR: ")
 
 
 class YtDlpExtractor:

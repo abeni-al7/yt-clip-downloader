@@ -28,9 +28,16 @@ class Settings:
     js_runtime: str | None = "deno"
     ytdlp_cookies_file: str | None = None
     ytdlp_proxy: str | None = None
-    # Clients that work from datacenter IPs when a PO token is supplied (yt-dlp wiki recommends
-    # mweb + PO token); visionos needs neither JS nor a token and is kept as a cheap extra.
-    ytdlp_player_clients: tuple[str, ...] = ("mweb", "visionos")
+    # Clients tried in order on every extraction; formats from all that answer are merged.
+    # TV/embedded clients are gated differently from web/mobile ones on flagged datacenter IPs;
+    # bgutil can attest every client here except visionos (kept as a token-free extra).
+    ytdlp_player_clients: tuple[str, ...] = (
+        "tv_simply",
+        "tv_downgraded",
+        "web_embedded",
+        "mweb",
+        "visionos",
+    )
     # "always" also attaches a *player* PO token, which is what clears the bot check.
     ytdlp_fetch_pot: str = "always"
     ytdlp_extractor_args: str | None = None

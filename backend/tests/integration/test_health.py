@@ -22,7 +22,7 @@ async def test_health_reports_dependencies_and_idle_streams(client: httpx.AsyncC
     assert body["js_runtime"] == {"name": None, "available": False}
     # Tests run without the bgutil server: reported, never fatal.
     assert body["pot_provider"] == {"url": None, "available": False, "version": None}
-    assert body["player_clients"] == ["mweb", "visionos"]
+    assert body["player_clients"] == list(Settings().ytdlp_player_clients)
 
 
 async def test_unreachable_configured_pot_provider_degrades_health(
