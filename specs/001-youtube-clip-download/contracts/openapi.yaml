@@ -1,0 +1,309 @@
+openapi: 3.1.0
+info:
+  title: YouTube Clip Download API
+  version: 0.2.0
+  description: |
+    HTTP contract for feature `001-youtube-clip-download`, revision 2 (stateless streaming,
+    deployed on Render Free; the SPA is served separately from Vercel).
+
+    Design notes:
+    - No authentication, quotas or rate limits (FR-007, FR-008). The only capacity guard is a
+      concurrency semaphore that answers `503 busy` with `Retry-After`.
+    - Nothing is stored server-side. `GET /api/clip` performs the cut and streams the file in the
+      same response; there is no job, status or retention endpoint.
+    - CORS: `Access-Control-Allow-Origin` is emitted for the configured frontend origins on
+      `/api/videos/resolve` and `/api/health`. `/api/clip` is opened as a browser navigation
+      (new tab), so it does not depend on CORS.
+    - Errors use the `Error` schema. `/api/clip` negotiates on `Accept`: JSON for API clients,
+      a minimal self-contained HTML page for browser navigations.
+    - Times are integers in seconds; `start`/`end` also accept the UI timestamp grammar
+      (`HH:MM:SS`, `MM:SS`, `SS`, `1h5m30s`).
+servers:
+  - url: https://{service}.onrender.com/api
+    variables:
+      service:
+        default: yt-clip-api
+  - url: http://localhost:8000/api
+tags:
+  - name: videos
+  - name: clip
+  - name: system
+
+paths:
+  /videos/resolve:
+    post:
+      tags: [videos]
+      operationId: resolveVideo
+      summary: Canonicalise a YouTube link and return the metadata needed to pick a range, format and quality
+      description: |
+        Implements FR-001, FR-002, FR-003, FR-011, FR-022. Result is cached in memory for ~10 minutes
+        per video so the following `GET /api/clip` can start streaming without a second extraction.
+        On a cold Render instance this call may take up to ~60 s (spin-up) plus extraction time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  description: Any supported YouTube link form, or a bare 11-character video ID.
+                  examples: ["https://youtu.be/GlmMxmWHEfg?t=90"]
+      responses:
+        "200":
+          description: Video is public and clippable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VideoInfo" }
+        "400":
+          description: "`invalid_url` or `playlist_only`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "Video cannot be processed: `private`, `age_restricted`, `members_only`, `video_unavailable`, `live_in_progress`, `drm_protected`, `geo_blocked`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "502":
+          description: "YouTube could not be reached or extraction failed: `bot_check`, `extraction_failed`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /clip:
+    get:
+      tags: [clip]
+      operationId: downloadClip
+      summary: Cut the requested segment and stream it as a file download
+      description: |
+        Implements FR-004–FR-014, FR-016–FR-020, FR-022, FR-023. The response body is produced by
+        ffmpeg (input-side seek + stream copy, audio transcode only for MP3/OGG) while it is being sent;
+        `Content-Length` is therefore absent and `Transfer-Encoding: chunked` is used. Boundaries snap
+        outward to the nearest keyframe (FR-014). No duration limit and no timeout apply (FR-006).
+        Nothing is written to disk or retained after the response ends (FR-020).
+
+        Response headers are sent only after ffmpeg has produced its first bytes, so validation and
+        extraction failures are still reported with a proper status code. After that point a failure
+        can only surface as a closed connection (the browser marks the download as failed).
+
+        Intended to be opened as a browser navigation (`<a target="_blank">`); `Content-Disposition:
+        attachment` triggers the download. `Range` requests are not supported (the output is generated
+        on the fly).
+      parameters:
+        - in: query
+          name: v
+          required: true
+          schema: { type: string }
+          description: 11-character video ID or any accepted YouTube URL.
+        - in: query
+          name: start
+          required: true
+          schema:
+            oneOf:
+              - { type: integer, minimum: 0 }
+              - { type: string }
+          description: Seconds or timestamp string.
+        - in: query
+          name: end
+          required: true
+          schema:
+            oneOf:
+              - { type: integer, minimum: 1 }
+              - { type: string }
+        - in: query
+          name: format
+          required: true
+          schema: { $ref: "#/components/schemas/OutputFormat" }
+        - in: query
+          name: height
+          required: false
+          schema: { type: integer }
+          description: Required for `mp4`/`webm` (must be one of `VideoInfo.resolutions[format][].height`); must be omitted for audio formats.
+      responses:
+        "200":
+          description: The clip, streamed.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+              description: "`attachment; filename=\"<ascii>\"; filename*=UTF-8''<encoded>` — see data-model → filename."
+            Content-Type:
+              schema: { type: string }
+              description: "`video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg`."
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            X-Clip-Start-Requested:
+              schema: { type: integer }
+              description: Echo of the validated start (seconds), for debugging.
+            X-Clip-End-Requested:
+              schema: { type: integer }
+          content:
+            video/mp4: { schema: { type: string, format: binary } }
+            video/webm: { schema: { type: string, format: binary } }
+            audio/mpeg: { schema: { type: string, format: binary } }
+            audio/mp4: { schema: { type: string, format: binary } }
+            audio/ogg: { schema: { type: string, format: binary } }
+        "400":
+          description: "`invalid_url`, `playlist_only`, `invalid_range`, `unsupported_format`, `unsupported_resolution`, `no_audio_track`."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+            text/html:
+              schema: { type: string, description: Self-contained error page with a link back to the app. }
+        "422":
+          description: Video not clippable (same codes as resolve).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+            text/html:
+              schema: { type: string }
+        "502":
+          description: "`bot_check`, `extraction_failed`, `processing_failed` (ffmpeg failed before the first byte)."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+            text/html:
+              schema: { type: string }
+        "503":
+          description: "`busy` — all stream slots are in use. Includes `Retry-After: 15`; the HTML variant auto-refreshes."
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+            text/html:
+              schema: { type: string }
+
+  /health:
+    get:
+      tags: [system]
+      operationId: health
+      summary: Runtime dependency check and wake-up probe
+      description: |
+        Used by Render's health check, by the SPA on load to detect a cold instance (R10), and by the
+        quickstart. Cheap; never touches YouTube.
+      responses:
+        "200":
+          description: Service is up (dependencies may be degraded — see body).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+components:
+  schemas:
+    OutputFormat:
+      type: string
+      enum: [mp4, webm, mp3, m4a, ogg, opus]
+      description: "`mp4`/`webm` are video with sound; the rest are audio-only (FR-010)."
+
+    ErrorCode:
+      type: string
+      enum:
+        - invalid_request
+        - invalid_url
+        - playlist_only
+        - invalid_range
+        - unsupported_format
+        - unsupported_resolution
+        - no_audio_track
+        - private
+        - age_restricted
+        - members_only
+        - video_unavailable
+        - live_in_progress
+        - drm_protected
+        - geo_blocked
+        - bot_check
+        - extraction_failed
+        - processing_failed
+        - busy
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        message:
+          type: string
+          description: Plain-language, user-facing text (FR-019).
+        details:
+          type: object
+          additionalProperties: true
+          description: "Optional machine-readable context, e.g. field name and allowed maximum for `invalid_range`."
+
+    VideoVariant:
+      type: object
+      required: [height, fps, vcodec, video_kbps]
+      properties:
+        height: { type: integer }
+        fps: { type: integer }
+        vcodec:
+          type: string
+          enum: [avc1, vp9, av01]
+          description: Codec the server will select for this height/container; drives the size estimate and the >1080p MP4 hint.
+        video_kbps: { type: integer }
+
+    VideoInfo:
+      type: object
+      required: [video_id, canonical_url, title, channel, thumbnail_url, duration_s, embeddable, has_audio, resolutions, audio]
+      properties:
+        video_id: { type: string, pattern: "^[A-Za-z0-9_-]{11}$" }
+        canonical_url: { type: string, format: uri }
+        title: { type: string }
+        channel: { type: string }
+        thumbnail_url: { type: string, format: uri }
+        duration_s: { type: integer, minimum: 1 }
+        embeddable:
+          type: boolean
+          description: Whether the IFrame preview can be shown.
+        has_audio:
+          type: boolean
+          description: False when the video has no audio track; audio-only formats are then rejected.
+        resolutions:
+          type: object
+          required: [mp4, webm]
+          properties:
+            mp4:
+              type: array
+              items: { $ref: "#/components/schemas/VideoVariant" }
+              description: Heights available for MP4 output, descending (FR-011).
+            webm:
+              type: array
+              items: { $ref: "#/components/schemas/VideoVariant" }
+              description: Heights with a VP9/AV1 stream, descending. May be empty.
+        audio:
+          type: object
+          properties:
+            m4a_kbps: { type: [integer, "null"] }
+            opus_kbps: { type: [integer, "null"] }
+        start_hint_s:
+          type: [integer, "null"]
+          description: Start time carried by the pasted URL (`t=`/`start=`), if any (FR-004).
+
+    Health:
+      type: object
+      required: [status, yt_dlp_version, ffmpeg, js_runtime, streams]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        yt_dlp_version: { type: string }
+        ffmpeg:
+          type: object
+          properties:
+            available: { type: boolean }
+            version: { type: [string, "null"] }
+        js_runtime:
+          type: object
+          properties:
+            name: { type: [string, "null"], description: "deno | node | bun | quickjs | null" }
+            available: { type: boolean }
+        streams:
+          type: object
+          properties:
+            active: { type: integer }
+            max: { type: integer }
+        rss_mb:
+          type: [integer, "null"]
+          description: Process resident memory, to watch the 512 MB ceiling.
