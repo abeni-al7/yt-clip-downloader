@@ -1,0 +1,25 @@
+# Render Blueprint — one free Docker web service for the API.
+# Apply with: Render Dashboard → New → Blueprint → select this repository.
+services:
+  - type: web
+    name: yt-clip-api
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Comma-separated list of frontend origins allowed by CORS (your Vercel URL).
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # Where the API's HTML error pages link back to (your Vercel URL).
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: MAX_CONCURRENT_STREAMS
+        value: "2"
+      - key: JS_RUNTIME
+        value: deno
+      - key: PYTHONUNBUFFERED
+        value: "1"
