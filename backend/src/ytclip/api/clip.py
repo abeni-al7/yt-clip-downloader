@@ -133,6 +133,8 @@ async def download_clip(
         params = ClipParams(
             video_id=parsed.video_id, start_s=start_s, end_s=end_s, format=fmt, height=height
         )
+        # Every URL handed to ffprobe/ffmpeg comes from the extractor's info dict; the only
+        # user-controlled input that reaches the network is the 11-character video id (SSRF).
         sources = select_sources(info, params)
         seek_s = None
         if sources.video is not None and sources.audio is not sources.video:

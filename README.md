@@ -1,0 +1,314 @@
+# YouTube Clip Download
+
+Paste a YouTube link, choose the part you want, pick a format and quality, and download **just that segment** — without downloading the whole video first.
+
+- No account, no sign-in, no quotas, no clip-length limit.
+- **Nothing is stored anywhere.** The clip is cut with ffmpeg *while* it streams to your browser and is gone the moment the download ends.
+- Six formats: MP4, WebM (video with sound) · MP3, M4A, OGG, Opus (audio only).
+- Original quality — video is never re-encoded. Cuts snap outward to the nearest keyframe, so a clip may include a few extra seconds at the start or end.
+- Designed for a single user on free hosting: backend on **Render Free**, frontend on **Vercel Hobby**.
+
+> **Legal**: you are responsible for complying with YouTube's Terms of Service and applicable copyright law. Use it for content you have the right to download.
+
+---
+
+## Table of contents
+
+1. [How it works](#how-it-works)
+2. [Repository layout](#repository-layout)
+3. [Prerequisites](#prerequisites)
+4. [Run locally](#run-locally)
+5. [Run with Docker](#run-with-docker)
+6. [Tests and quality gates](#tests-and-quality-gates)
+7. [Deploy the backend to Render (free)](#deploy-the-backend-to-render-free)
+8. [Deploy the frontend to Vercel (free)](#deploy-the-frontend-to-vercel-free)
+9. [Connect the two and verify](#connect-the-two-and-verify)
+10. [Configuration reference](#configuration-reference)
+11. [Free-tier realities](#free-tier-realities)
+12. [Troubleshooting](#troubleshooting)
+13. [API](#api)
+14. [Design documents](#design-documents)
+
+---
+
+## How it works
+
+```text
+Browser (Vercel, static)                 API (Render, Docker)                      YouTube
+─────────────────────────                ────────────────────────                  ───────
+1. paste link ──POST /api/videos/resolve──▶ yt-dlp extract_info (metadata only) ──▶ player API
+   ◀── title, duration, resolutions ──────
+2. pick range / format / quality
+3. click Download ── GET /api/clip?… ────▶ ffprobe: keyframe at/before start ─────▶ Range request
+   (opens in a new tab)                    ffmpeg  -ss <keyframe> -t <len> -i <video url>
+                                                   -ss <keyframe> -t <len> -i <audio url>
+                                                   -c copy … -f mp4 pipe:1     ◀────── Range requests
+   ◀── file streams as it is produced ──── stdout piped straight into the HTTP response
+```
+
+- **yt-dlp** is used only to *describe* the video and obtain the direct stream URLs (with the right headers). It never downloads.
+- **ffmpeg** reads only the byte ranges it needs (input-side `-ss`/`-t` on HTTPS inputs), copies the streams (no re-encode) and writes to a pipe. MP4/M4A are written as fragmented MP4 because a pipe cannot be seeked; WebM gets the correct duration header; MP3 is constant-bitrate so players show the right length.
+- Both inputs are seeked to the **same keyframe** (found with a tiny `ffprobe` probe), so audio and video stay aligned and the audio covers the lead-in.
+- Audio is transcoded only when the container cannot carry the source codec, or for MP3/OGG, which YouTube does not serve. Video is never transcoded.
+- The response headers are sent only after ffmpeg produced its first bytes, so validation and extraction errors still arrive as proper status codes with a plain-language message (JSON for API clients, a small HTML page for browser tabs).
+- If the browser cancels the download, the server kills ffmpeg immediately.
+
+## Repository layout
+
+```text
+backend/     FastAPI service (Python 3.12, uv). Dockerfile installs ffmpeg + Deno.
+  src/ytclip/
+    api/       resolve, clip (streaming), health, error negotiation
+    domain/    URL canonicalisation, timestamp grammar, format inventory, ffmpeg plan, file names
+    media/     yt-dlp extractor + error classification, ffmpeg streamer, keyframe probe, in-memory cache
+  tests/       unit + integration (offline: synthetic media generated with ffmpeg) + opt-in live tests
+frontend/    Vite + React 19 + TypeScript single page. vercel.json rewrites everything to index.html.
+render.yaml  Render Blueprint for the API (one free Docker web service)
+specs/       Spec Kit artifacts: spec, plan, research, data model, contracts, quickstart, tasks
+```
+
+## Prerequisites
+
+| Tool | Version | Needed for |
+|------|---------|-----------|
+| [uv](https://docs.astral.sh/uv/) | ≥ 0.4 | Python environment and lockfile (it downloads Python 3.12 for you) |
+| Node.js | ≥ 20 (22 recommended) | frontend build; also usable as yt-dlp's JS runtime in development |
+| ffmpeg + ffprobe | ≥ 6 (7/8 recommended) | cutting, muxing, audio transcode, tests |
+| Deno *(optional locally)* | latest | yt-dlp's recommended JS runtime; the Docker image installs it. Locally you can use Node instead (`JS_RUNTIME=node`) |
+| Docker *(optional)* | any current | build/run the exact image Render runs |
+| Accounts | — | GitHub, [Render](https://render.com) (Hobby workspace), [Vercel](https://vercel.com) (Hobby) |
+
+Check your machine:
+
+```bash
+uv --version && node --version && ffmpeg -version | head -1 && ffprobe -version | head -1
+```
+
+yt-dlp needs **ffmpeg with libx264/libvpx/libmp3lame/libopus** (the standard Debian/Ubuntu/Homebrew builds have them). `libvorbis` is optional — the server falls back to ffmpeg's built-in Vorbis encoder for OGG.
+
+## Run locally
+
+Two terminals.
+
+**Backend** (http://localhost:8000):
+
+```bash
+cd backend
+uv sync                                  # creates .venv, installs fastapi, yt-dlp[default], dev tools
+export ALLOWED_ORIGINS=http://localhost:5173
+export FRONTEND_ORIGIN=http://localhost:5173
+export JS_RUNTIME=node                   # use "deno" if you have Deno installed; omit to default to deno
+uv run uvicorn ytclip.main:app --reload --port 8000
+```
+
+**Frontend** (http://localhost:5173):
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local               # VITE_API_BASE_URL=http://localhost:8000
+npm run dev
+```
+
+Open http://localhost:5173, paste a public YouTube link, choose a range, click **Download**. The download opens in a new tab; keep the browser open until it finishes.
+
+Sanity check without the UI:
+
+```bash
+curl -s localhost:8000/api/health | jq
+curl -s localhost:8000/api/videos/resolve -H 'content-type: application/json' \
+     -d '{"url":"https://www.youtube.com/watch?v=jNQXAC9IVRw"}' | jq '{title, duration_s, resolutions}'
+curl -OJ "localhost:8000/api/clip?v=jNQXAC9IVRw&start=2&end=12&format=mp4&height=240"
+```
+
+## Run with Docker
+
+This is the exact image Render builds.
+
+```bash
+docker build -t ytclip backend
+docker run --rm -p 8000:10000 \
+  -e ALLOWED_ORIGINS=http://localhost:5173 -e FRONTEND_ORIGIN=http://localhost:5173 \
+  ytclip
+curl -s localhost:8000/api/health | jq          # js_runtime.name should be "deno", available true
+```
+
+The container listens on `$PORT` (default `10000`, Render's default), runs as a non-root user, and writes nothing to disk. You can prove the last point: after a download, `docker diff <container>` shows no new files.
+
+## Tests and quality gates
+
+```bash
+# backend: lint, format check, unit + integration tests (offline — ffmpeg generates synthetic media)
+cd backend
+uv run ruff check . && uv run ruff format --check .
+uv run pytest                                   # ~40 s; the first run generates fixtures
+
+# backend: opt-in live test against a real public YouTube video
+YTCLIP_LIVE=1 JS_RUNTIME=node uv run pytest tests/live -m live
+
+# frontend: lint, type-check, unit/component tests, production build
+cd frontend
+npm run lint && npx tsc -b && npm test && npm run build
+```
+
+Integration tests drive the real `GET /api/clip` streaming path with a fake extractor pointing at locally generated media, then assert with `ffprobe` (codecs, heights, durations within `[requested, requested + 10 s]`, aligned stream start times, ffmpeg reaped on client disconnect).
+
+---
+
+## Deploy the backend to Render (free)
+
+The repository contains a Blueprint, [render.yaml](render.yaml), describing one **Docker web service on the Free plan**. Render's native Python runtime is not an option because ffmpeg and Deno cannot be installed there.
+
+1. **Push** this repository to GitHub (or GitLab/Bitbucket).
+2. In the [Render Dashboard](https://dashboard.render.com) click **New → Blueprint**, connect your Git provider if needed, and select the repository. Render reads `render.yaml`.
+3. Render asks for the two variables marked `sync: false`. You may not know the Vercel URL yet — enter placeholders and change them later:
+   - `ALLOWED_ORIGINS` → e.g. `http://localhost:5173` for now
+   - `FRONTEND_ORIGIN` → same
+4. Click **Apply**. The first build takes 5–8 minutes (apt installs ffmpeg, uv installs Python deps). Later builds reuse cached layers.
+5. When the deploy is live, note the service URL: `https://<service-name>.onrender.com`.
+6. Verify:
+
+   ```bash
+   API=https://<service-name>.onrender.com
+   curl -s $API/api/health | jq
+   # expect: "status":"ok", ffmpeg.available true, js_runtime {"name":"deno","available":true}
+   ```
+
+7. **Bot-check go/no-go** (do this before anything else — see [Free-tier realities](#free-tier-realities)):
+
+   ```bash
+   curl -s $API/api/videos/resolve -H 'content-type: application/json' \
+        -d '{"url":"https://www.youtube.com/watch?v=jNQXAC9IVRw"}' | jq '{title, duration_s}'
+   ```
+
+   If this returns `"code": "bot_check"`, YouTube is challenging Render's IP range. See [Troubleshooting → bot_check](#youtube-says-bot_check).
+
+What the Blueprint sets (Dashboard → your service → Environment):
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `ALLOWED_ORIGINS` | *(you set it)* | Comma-separated frontend origins allowed by CORS |
+| `FRONTEND_ORIGIN` | *(you set it)* | Where the API's HTML error pages link "Back to the app" |
+| `MAX_CONCURRENT_STREAMS` | `2` | Concurrent ffmpeg streams; the third request gets `503 busy` and retries |
+| `JS_RUNTIME` | `deno` | JavaScript runtime for yt-dlp (Deno is in the image) |
+| `PYTHONUNBUFFERED` | `1` | Real-time logs |
+
+Health check path is `/api/health`; auto-deploy on push is enabled.
+
+### Updating yt-dlp on Render
+
+YouTube changes frequently; when extraction starts failing with `extraction_failed`, update yt-dlp and push:
+
+```bash
+cd backend && uv lock --upgrade-package yt-dlp && git commit -am "chore: bump yt-dlp" && git push
+```
+
+Render rebuilds automatically. `/api/health` shows the running `yt_dlp_version`.
+
+## Deploy the frontend to Vercel (free)
+
+1. In [Vercel](https://vercel.com/new) click **Add New → Project** and import the same repository.
+2. Configure the project:
+   - **Root Directory**: `frontend`
+   - **Framework Preset**: Vite (auto-detected)
+   - **Build Command**: `npm run build` · **Output Directory**: `dist` (defaults)
+3. **Environment Variables** (Production *and* Preview):
+   - `VITE_API_BASE_URL` = `https://<service-name>.onrender.com` (no trailing slash)
+   - optional `VITE_LARGE_DOWNLOAD_BYTES` = `524288000` (threshold for the "large download" warning; default 500 MB)
+4. Click **Deploy**. `frontend/vercel.json` rewrites every path to `index.html`.
+5. Note your URL: `https://<project>.vercel.app` (plus any custom domain you add).
+
+Vercel's Hobby plan is for **non-commercial, personal** use.
+
+## Connect the two and verify
+
+1. Back in Render → your service → **Environment**, set:
+   - `ALLOWED_ORIGINS` = `https://<project>.vercel.app` (add more origins comma-separated, e.g. a custom domain; `https://*.vercel.app` preview deployments are already allowed by a built-in regex)
+   - `FRONTEND_ORIGIN` = `https://<project>.vercel.app`
+   Save → Render redeploys.
+2. Verify CORS from the terminal:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS "$API/api/videos/resolve" \
+     -H "Origin: https://<project>.vercel.app" \
+     -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: content-type"
+   # 200
+   ```
+
+3. Open `https://<project>.vercel.app`. If the API was asleep you will see *"Starting the server… this can take up to a minute"*; once it disappears, paste a link, choose a range, click **Download**.
+
+## Configuration reference
+
+### Backend (environment variables)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `10000` | Port uvicorn binds on `0.0.0.0` (Render sets this) |
+| `ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated exact origins allowed by CORS |
+| `ALLOWED_ORIGIN_REGEX` | `^https://.*\.vercel\.app$` | Regex for additional allowed origins (Vercel previews). Set empty to disable |
+| `FRONTEND_ORIGIN` | `http://localhost:5173` | Link target on HTML error pages |
+| `MAX_CONCURRENT_STREAMS` | `2` | Parallel ffmpeg streams before answering `503 busy` (a capacity guard for 512 MB RAM, not a quota) |
+| `JS_RUNTIME` | `deno` | yt-dlp JavaScript runtime: `deno`, `node`, `bun`, `quickjs`, or empty to disable |
+| `YTDLP_COOKIES_FILE` | *(unset)* | Path to a Netscape cookies file for yt-dlp (see bot_check below) |
+| `YTDLP_PROXY` | *(unset)* | Proxy URL for yt-dlp and extraction, e.g. `socks5://user:pass@host:1080` |
+| `CACHE_TTL_S` | `600` | Seconds to keep a video's metadata in memory so Download right after Load needs no second extraction |
+| `CACHE_MAX_ENTRIES` | `50` | Metadata cache size |
+
+### Frontend (Vite build-time variables)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_API_BASE_URL` | *(empty → same origin)* | Backend base URL, no trailing slash |
+| `VITE_LARGE_DOWNLOAD_BYTES` | `524288000` | Estimated size above which the bandwidth warning appears |
+
+## Free-tier realities
+
+These are properties of the hosting, not bugs:
+
+- **Cold start (~1 minute).** A Render Free service sleeps after 15 minutes without traffic and takes about a minute to wake. The page shows a banner and disables Download until `/api/health` answers.
+- **5 GB/month outbound bandwidth** on Render's Hobby workspace. Every downloaded clip counts. Roughly: 350–500 thirty-second 1080p clips, or a handful of long/4K clips. If you exceed it without a card on file, Render suspends the service until next month; with a card it bills $0.15/GB. The UI shows an estimated size for every clip and warns above 500 MB. The app itself imposes **no** limit.
+- **Very large clips** can also trigger Render's "uncommonly high volume of traffic" suspension. Prefer lower resolutions for multi-hour clips.
+- **0.1 CPU / 512 MB RAM.** Video is never re-encoded, so MP4/WebM/M4A/Opus are cheap. MP3 and OGG *are* transcoded (audio only) and are slower for long clips.
+- **Nothing persists** — by design. Downloads run only while your browser is connected; if you close the tab the download stops. Click Download again to re-cut.
+- **YouTube may challenge cloud IPs** ("Sign in to confirm you're not a bot"). See below.
+
+## Troubleshooting
+
+### YouTube says `bot_check`
+Resolve returns `502 {"code":"bot_check"}`. YouTube is asking the server's IP to prove it is human — common for datacenter ranges. Options, in order:
+
+1. **Update yt-dlp** (see above); its EJS/PO-token support resolves many challenges.
+2. **Cookies (at your own risk)**: export cookies from a browser logged into a throwaway YouTube account (see yt-dlp's wiki on cookies), upload the file as a Render **Secret File** (Environment → Secret Files), and set `YTDLP_COOKIES_FILE=/etc/secrets/cookies.txt`. YouTube may act against the account.
+3. **Proxy**: set `YTDLP_PROXY` to a residential proxy (paid).
+4. **Different host**: the container is portable — anything with a residential IP works.
+
+### `extraction_failed`
+yt-dlp could not read the video; the message contains yt-dlp's own text. Usually fixed by updating yt-dlp.
+
+### Download never starts / tab shows an error page
+The API answers browser navigations with a small HTML page explaining the error code (`invalid_range`, `unsupported_resolution`, `busy`, …). `busy` pages auto-refresh every 15 s.
+
+### `js_runtime.available: false` in `/api/health`
+Locally: install Deno or set `JS_RUNTIME=node`. In Docker this should never happen — check the image built from `backend/Dockerfile`.
+
+### Clip is a few seconds longer than requested
+Expected. Cutting without re-encoding must start at a keyframe (typically ≤ 5 s before your start) and one extra second is read at the end.
+
+### Tests: "ffmpeg/ffprobe are required"
+Install ffmpeg. The suite generates its own test media with `ffmpeg -f lavfi`.
+
+## API
+
+Three endpoints, no authentication. Full contract: [specs/001-youtube-clip-download/contracts/openapi.yaml](specs/001-youtube-clip-download/contracts/openapi.yaml).
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/videos/resolve` | `{"url": "<youtube link or id>"}` → title, duration, per-container resolutions with bitrates, audio bitrates, start hint |
+| `GET` | `/api/clip?v=&start=&end=&format=&height=` | Streams the clip as an attachment. `start`/`end` accept seconds or `HH:MM:SS`; `height` required for `mp4`/`webm`, forbidden for audio formats |
+| `GET` | `/api/health` | yt-dlp version, ffmpeg, JS runtime, active streams, RSS |
+
+Errors: `{"code": "...", "message": "..."}` (JSON) or an HTML page when the request comes from a browser tab. Codes: `invalid_url`, `playlist_only`, `invalid_range`, `unsupported_format`, `unsupported_resolution`, `no_audio_track`, `private`, `age_restricted`, `members_only`, `video_unavailable`, `live_in_progress`, `drm_protected`, `geo_blocked`, `bot_check`, `extraction_failed`, `processing_failed`, `busy`.
+
+## Design documents
+
+Built with [Spec Kit](https://github.com/github/spec-kit): [spec](specs/001-youtube-clip-download/spec.md) · [plan](specs/001-youtube-clip-download/plan.md) · [research](specs/001-youtube-clip-download/research.md) · [data model](specs/001-youtube-clip-download/data-model.md) · [contracts](specs/001-youtube-clip-download/contracts/README.md) · [quickstart & validation scenarios](specs/001-youtube-clip-download/quickstart.md) · [tasks](specs/001-youtube-clip-download/tasks.md).
