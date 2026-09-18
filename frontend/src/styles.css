@@ -302,6 +302,21 @@ fieldset {
   color: var(--muted);
 }
 
+.quality-picker__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.choice--compact {
+  grid-template-rows: auto;
+  padding: 0.4rem 0.7rem;
+}
+
+.choice--compact input {
+  grid-row: 1;
+}
+
 /* Dual-handle range: two native inputs stacked on one track */
 .range-selector {
   display: flex;

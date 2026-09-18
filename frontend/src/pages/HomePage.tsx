@@ -6,6 +6,7 @@ import { DownloadButton } from "../components/DownloadButton";
 import { DownloadHint } from "../components/DownloadHint";
 import { FormatPicker } from "../components/FormatPicker";
 import { PreviewPlayer } from "../components/PreviewPlayer";
+import { QualityPicker } from "../components/QualityPicker";
 import { type Range, RangeSelector } from "../components/RangeSelector";
 import { SizeEstimate } from "../components/SizeEstimate";
 import { TimestampField } from "../components/TimestampField";
@@ -198,6 +199,12 @@ export function HomePage({ serverStatus }: Props) {
 
           <section className="card" aria-label="Format and quality">
             <FormatPicker video={video} value={selection.format} onChange={onFormatChange} />
+            <QualityPicker
+              video={video}
+              format={selection.format}
+              value={selection.height}
+              onChange={(height) => update({ height })}
+            />
           </section>
 
           <section className="card" aria-label="Download">
