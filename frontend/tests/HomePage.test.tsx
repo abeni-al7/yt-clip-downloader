@@ -32,9 +32,10 @@ describe("HomePage", () => {
 
     expect(screen.getByText(/Rick Astley/)).toBeInTheDocument();
     expect(screen.getByText(/Length 00:03:32/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Start")).toHaveValue("00:01:00");
-    expect(screen.getByLabelText("End")).toHaveValue("00:03:32");
+    expect(screen.getByRole("textbox", { name: "Start" })).toHaveValue("00:01:00");
+    expect(screen.getByRole("textbox", { name: "End" })).toHaveValue("00:03:32");
     expect(screen.getByText(copy.boundary_notice)).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Start" })).toHaveValue("60");
   });
 
   it("disables Download and explains when the end is before the start", async () => {
@@ -43,7 +44,7 @@ describe("HomePage", () => {
     render(<App />);
     await loadVideo(user);
 
-    const end = screen.getByLabelText("End");
+    const end = screen.getByRole("textbox", { name: "End" });
     await user.clear(end);
     await user.type(end, "00:00:30{Enter}");
 
@@ -58,7 +59,7 @@ describe("HomePage", () => {
     render(<App />);
     await loadVideo(user);
 
-    const end = screen.getByLabelText("End");
+    const end = screen.getByRole("textbox", { name: "End" });
     await user.clear(end);
     await user.type(end, "00:01:30{Enter}");
 
@@ -83,7 +84,7 @@ describe("HomePage", () => {
     render(<App />);
     await loadVideo(user);
 
-    const end = screen.getByLabelText("End");
+    const end = screen.getByRole("textbox", { name: "End" });
     await user.clear(end);
     await user.type(end, "10:00{Enter}");
 

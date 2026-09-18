@@ -5,6 +5,8 @@ import { BoundaryNotice } from "../components/BoundaryNotice";
 import { DownloadButton } from "../components/DownloadButton";
 import { DownloadHint } from "../components/DownloadHint";
 import { FormatPicker } from "../components/FormatPicker";
+import { PreviewPlayer } from "../components/PreviewPlayer";
+import { type Range, RangeSelector } from "../components/RangeSelector";
 import { SizeEstimate } from "../components/SizeEstimate";
 import { TimestampField } from "../components/TimestampField";
 import { UrlInput } from "../components/UrlInput";
@@ -122,6 +124,8 @@ export function HomePage({ serverStatus }: Props) {
     update({ format, height: defaultHeight(video, format) });
   };
 
+  const onRangeChange = (range: Range) => update({ startS: range.startS, endS: range.endS });
+
   const rangeError = video && selection.endS - selection.startS < 1 ? copy.end_before_start : null;
   const needsHeight = isVideoFormat(selection.format) && selection.height === null;
 
@@ -165,6 +169,13 @@ export function HomePage({ serverStatus }: Props) {
           </section>
 
           <section className="card" aria-label="Time range">
+            <PreviewPlayer video={video} startS={selection.startS} endS={selection.endS} />
+            <RangeSelector
+              durationS={video.duration_s}
+              startS={selection.startS}
+              endS={Math.max(selection.startS + 1, selection.endS)}
+              onChange={onRangeChange}
+            />
             <div className="row">
               <TimestampField
                 id="start"

@@ -302,6 +302,123 @@ fieldset {
   color: var(--muted);
 }
 
+/* Dual-handle range: two native inputs stacked on one track */
+.range-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.range-selector__track {
+  position: relative;
+  height: 6px;
+  margin: 0.75rem 0.5rem 0;
+  border-radius: 3px;
+  background: var(--border);
+}
+
+.range-selector__selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--accent);
+  border-radius: 3px;
+}
+
+.range-selector__inputs {
+  position: relative;
+  height: 28px;
+  margin: -17px 0 0;
+}
+
+.range-selector__handle {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.range-selector__handle::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.range-selector__handle::-moz-range-track {
+  background: transparent;
+}
+
+.range-selector__handle::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  cursor: grab;
+}
+
+.range-selector__handle::-moz-range-thumb {
+  pointer-events: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--accent);
+  cursor: grab;
+}
+
+.range-selector__handle:focus-visible::-webkit-slider-thumb {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.range-selector__footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.range-selector__zoom {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 500;
+}
+
+.range-selector__zoom select {
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.preview__frame {
+  aspect-ratio: 16 / 9;
+  width: 100%;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.preview__frame iframe {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.preview__controls {
+  margin-top: 0.5rem;
+}
+
 @media (max-width: 767px) {
   .row {
     flex-direction: column;
