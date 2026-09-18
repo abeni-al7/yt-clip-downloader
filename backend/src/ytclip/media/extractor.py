@@ -66,6 +66,19 @@ _PATTERNS: tuple[tuple[re.Pattern[str], ErrorCode], ...] = (
 
 _MESSAGE_PREFIXES = re.compile(r"^(?:ERROR:\s*)?(?:\[[\w:-]+\]\s*)?(?:[\w-]{11}:\s*)?")
 
+# yt-dlp debug lines worth keeping for the operator: which pages were fetched, whether PO
+# tokens were obtained and from which provider, and what each client's player response said.
+# Token values, proxies and headers never appear in these lines.
+_DIAGNOSTIC_DEBUG = re.compile(
+    r"PO Token|\[pot\b|player response playability status|Solving JS challenges"
+    r"|Downloading (?:webpage|.*client config|player API JSON|iframe API|initial data API JSON)"
+    r"|formats require|Skipping player responses|Sign in|not a bot",
+    re.I,
+)
+# With `youtube:pot_trace=true` these two lines carry the token itself; never expose them.
+_DIAGNOSTIC_SECRET = re.compile(r"Generated POT|PO Token response")
+_MAX_DIAGNOSTICS = 40
+
 
 def classify_error(exc: BaseException) -> ErrorCode:
     text = str(exc)
@@ -113,24 +126,32 @@ def check_availability(info: dict[str, Any]) -> None:
 
 
 class _YtDlpLogger:
-    """Routes yt-dlp output to logging and keeps this extraction's warnings for diagnostics."""
+    """Routes yt-dlp output to logging and keeps a trimmed, chronological trace for diagnostics."""
 
     def __init__(self) -> None:
-        self.warnings: list[str] = []
+        self.diagnostics: list[str] = []
+
+    def _keep(self, msg: str, prefix: str = "") -> None:
+        if len(self.diagnostics) < _MAX_DIAGNOSTICS:
+            self.diagnostics.append(prefix + trim_ytdlp_message(msg, limit=300))
 
     def debug(self, msg: str) -> None:
         log.debug("yt-dlp: %s", msg)
+        if _DIAGNOSTIC_DEBUG.search(msg) and not _DIAGNOSTIC_SECRET.search(msg):
+            self._keep(msg)
 
     def info(self, msg: str) -> None:
         log.debug("yt-dlp: %s", msg)
+        if _DIAGNOSTIC_DEBUG.search(msg) and not _DIAGNOSTIC_SECRET.search(msg):
+            self._keep(msg)
 
     def warning(self, msg: str) -> None:
         log.warning("yt-dlp: %s", msg)
-        if len(self.warnings) < 20:
-            self.warnings.append(trim_ytdlp_message(msg, limit=300))
+        self._keep(msg, "WARNING: ")
 
     def error(self, msg: str) -> None:
         log.error("yt-dlp: %s", msg)
+        self._keep(msg, "ERROR: ")
 
 
 class YtDlpExtractor:
@@ -155,7 +176,8 @@ class YtDlpExtractor:
         opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": False,
-            "verbose": s.log_level == "DEBUG",
+            # Verbose output only reaches our logger (DEBUG level) and the diagnostics allow-list.
+            "verbose": True,
             "skip_download": True,
             "noplaylist": True,
             "cachedir": False,
@@ -187,8 +209,9 @@ class YtDlpExtractor:
         try:
             return await asyncio.to_thread(run)
         except Exception as exc:
+            message = trim_ytdlp_message(str(exc))
             raise ExtractionError(
-                classify_error(exc), trim_ytdlp_message(str(exc)), logger.warnings
+                classify_error(exc), message, [f"yt-dlp: {message}", *logger.diagnostics]
             ) from exc
 
 

@@ -1,7 +1,7 @@
 import pytest
 
 from ytclip.config import Settings
-from ytclip.media.extractor import YtDlpExtractor, parse_extractor_args
+from ytclip.media.extractor import YtDlpExtractor, _YtDlpLogger, parse_extractor_args
 
 
 def test_defaults_target_datacenter_friendly_clients_with_po_tokens() -> None:
@@ -77,5 +77,33 @@ def test_options_pass_extractor_args_and_keep_no_cache() -> None:
     assert opts["extractor_args"]["youtube"]["fetch_pot"] == ["always"]
     assert opts["cachedir"] is False
     assert opts["skip_download"] is True
-    assert opts["verbose"] is False
-    assert YtDlpExtractor(Settings.from_env({"LOG_LEVEL": "DEBUG"})).options()["verbose"] is True
+    # Verbose output feeds the diagnostics allow-list; it only reaches logs at DEBUG level.
+    assert opts["verbose"] is True
+
+
+def test_ytdlp_logger_keeps_a_chronological_operator_trace() -> None:
+    logger = _YtDlpLogger()
+    logger.debug("[debug] Python 3.12 (CPython x86_64 64bit)")  # noise: dropped
+    logger.debug("[youtube] jNQXAC9IVRw: Downloading webpage")
+    logger.warning("[youtube] Unable to download webpage: HTTP Error 429: Too Many Requests")
+    logger.debug("[debug] [youtube] jNQXAC9IVRw: Retrieved a player PO Token for mweb client")
+    logger.debug(
+        "[debug] [youtube] jNQXAC9IVRw: mweb player response playability status: LOGIN_REQUIRED"
+    )
+    logger.debug("[debug] [pot] PO Token response from bgutil:http provider: secret")  # token value
+    logger.error("ERROR: [youtube] jNQXAC9IVRw: Sign in to confirm you're not a bot")
+
+    assert logger.diagnostics == [
+        "Downloading webpage",
+        "WARNING: Unable to download webpage: HTTP Error 429: Too Many Requests",
+        "[youtube] jNQXAC9IVRw: Retrieved a player PO Token for mweb client",
+        "[youtube] jNQXAC9IVRw: mweb player response playability status: LOGIN_REQUIRED",
+        "ERROR: Sign in to confirm you're not a bot",
+    ]
+
+
+def test_ytdlp_logger_caps_the_trace() -> None:
+    logger = _YtDlpLogger()
+    for i in range(100):
+        logger.warning(f"warning {i}")
+    assert len(logger.diagnostics) == 40
